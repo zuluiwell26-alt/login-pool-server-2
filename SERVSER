@@ -1,0 +1,4 @@
+app.get('/update-passwords', async (req, res) => {
+    await pool.query(`UPDATE accounts SET password = '12345QAZ'`);
+    res.json({ success: true, message: 'All passwords updated to 12345QAZ' });
+});
