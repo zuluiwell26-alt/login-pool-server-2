@@ -39,11 +39,12 @@ let poolLockedReason = '';
 function pad(n) { return String(n).padStart(2, '0'); }
 
 function checkLockStatus(hour, minute, freeCount) {
+    // Locked from 08:00 to 18:00, open from 18:00 to 08:00
     const afterLock = hour > LOCK_HOUR || (hour === LOCK_HOUR && minute >= LOCK_MINUTE);
     const beforeUnlock = hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
-    const isWorkingHours = afterLock && beforeUnlock;
+    const isLockedHours = afterLock && beforeUnlock;
     const isLowAccounts = freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
-    return { shouldLock: !isWorkingHours || isLowAccounts, isWorkingHours, isLowAccounts };
+    return { shouldLock: isLockedHours || isLowAccounts, isWorkingHours: !isLockedHours, isLowAccounts };
 }
 
 // Auto-free accounts after 24h
@@ -84,15 +85,15 @@ setInterval(async () => {
         if (!poolLocked) {
             poolLocked = true;
             poolLockedReason = !isWorkingHours
-                ? 'Locked at 18:00. Unlocks at 08:00.'
-                : `Free accounts reached ${freeCount}. Locked until 08:00.`;
+                ? 'Locked at 08:00. Unlocks at 18:00.'
+                : `Free accounts reached ${freeCount}. Locked until 18:00.`;
             console.log(poolLockedReason);
         }
     } else {
         if (poolLocked) {
             poolLocked = false;
             poolLockedReason = '';
-            console.log('Pool unlocked at 08:00.');
+            console.log('Pool unlocked at 18:00.');
         }
     }
 }, 10 * 1000);
@@ -661,8 +662,8 @@ initDB().then(async () => {
     if (shouldLock) {
         poolLocked = true;
         poolLockedReason = !isWorkingHours
-            ? 'Locked at 18:00. Unlocks at 08:00.'
-            : `Free accounts reached ${freeCount}. Locked until 08:00.`;
+            ? 'Locked at 08:00. Unlocks at 18:00.'
+            : `Free accounts reached ${freeCount}. Locked until 18:00.`;
         console.log('Startup lock:', poolLockedReason);
     }
     app.listen(PORT, () => console.log(`Pool Manager active on port ${PORT} — Zambia Time (Africa/Lusaka)`));
