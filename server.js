@@ -9,6 +9,7 @@ const {
     getBadPasswordAccounts,
     addBadPasswordAccount,
     removeBadPasswordAccount,
+    getZambiaTime,
     TWENTY_FOUR_HOURS_MS,
     FREE_ACCOUNT_LOCK_THRESHOLD,
     LOCK_HOUR,
@@ -17,6 +18,7 @@ const {
     UNLOCK_MINUTE,
     REMOVE_PASSWORD,
     HEARTBEAT_TIMEOUT_MS,
+    TIMEZONE,
 } = require('./accounts');
 
 const app = express();
@@ -37,7 +39,6 @@ let poolLockedReason = '';
 function pad(n) { return String(n).padStart(2, '0'); }
 
 function checkLockStatus(hour, minute, freeCount) {
-    // Open between 08:00 and 18:00
     const afterLock = hour > LOCK_HOUR || (hour === LOCK_HOUR && minute >= LOCK_MINUTE);
     const beforeUnlock = hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
     const isWorkingHours = afterLock && beforeUnlock;
@@ -63,7 +64,8 @@ setInterval(async () => {
     for (const acc of accounts) {
         if (acc.status === 'IN-USE' && !acc.logoutTime && acc.lastHeartbeat) {
             if (now - acc.lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
-                const timeStr = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                const { hour, minute } = getZambiaTime();
+                const timeStr = pad(hour) + ':' + pad(minute);
                 console.log(`Heartbeat lost for ${acc.phone}. Moving to waiting.`);
                 await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (tab closed)' });
             }
@@ -73,9 +75,7 @@ setInterval(async () => {
 
 // Pool lock check
 setInterval(async () => {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
+    const { hour, minute } = getZambiaTime();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
     const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
@@ -346,14 +346,12 @@ app.get('/', async (req, res) => {
         .unlock-sub{font-size:10px;color:#4b1111;margin-bottom:12px}
         .view-btn{width:100%;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border:none;background:#92400e;color:#fed7aa;text-decoration:none}
         .view-count{background:#fed7aa;color:#92400e;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:700}
-        .divider{height:1px;background:#1a1f2a;margin-bottom:20px}
         .add-box{background:#0d1117;border:1.5px solid #21262d;border-radius:14px;padding:20px 24px;margin-bottom:20px}
         .add-title{font-size:13px;font-weight:500;color:#8b949e;margin-bottom:14px;letter-spacing:0.5px;text-transform:uppercase}
         .add-row{display:flex;gap:10px;flex-wrap:wrap}
         .add-input{flex:1;min-width:120px;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 14px;border-radius:8px;font-size:13px;outline:none}
         .add-input::placeholder{color:#4b5563}
         .add-btn{background:#1a3a6e;border:none;color:#a8d0ff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
-        .reset-btn{width:100%;background:#130a0a;border:1.5px solid #3d1515;color:#f85149;padding:13px;border-radius:12px;font-size:13px;font-weight:500;cursor:pointer}
         .footer{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
         .tick{font-size:11px;color:#3fb950;font-family:monospace;opacity:0.7}
         .hint{font-size:10px;color:#252b35}
@@ -378,7 +376,7 @@ app.get('/', async (req, res) => {
             <div class="box-desc desc-free" id="free-desc">Accounts ready</div>
             <div id="unlock-block" style="display:none;">
                 <div class="unlock-timer" id="unlock-countdown">--:--:--</div>
-                <div class="unlock-sub">Unlocks at 18:00</div>
+                <div class="unlock-sub">Unlocks at 18:00 (Zambia)</div>
             </div>
             <a href="/view/free" class="view-btn">View <span class="view-count" id="cnt-free">${freeAccounts.length}</span></a>
         </div>
@@ -411,18 +409,21 @@ app.get('/', async (req, res) => {
         <div class="msg" id="add-msg"></div>
     </div>
     <div class="footer">
-        <span class="tick" id="tick">--:--:--</span>
-        <span class="hint">Live data · Postgres</span>
+        <span class="tick" id="tick">--:--:-- CAT</span>
+        <span class="hint">Live data · Postgres · Zambia Time</span>
     </div>
 </div>
 <script>
     function pad(n){return String(n).padStart(2,'0')}
+    function getZambiaTime(){
+        return new Date().toLocaleTimeString('en-GB',{timeZone:'Africa/Lusaka',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    }
     function update(){
-        const now=new Date();
-        document.getElementById('tick').textContent=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+        document.getElementById('tick').textContent=getZambiaTime()+' CAT';
         const cd=document.getElementById('unlock-countdown');
         if(cd&&document.getElementById('unlock-block').style.display!=='none'){
-            const unlock=new Date();unlock.setHours(18,0,0,0);
+            const now=new Date();
+            const unlock=new Date(now.toLocaleDateString('en-GB',{timeZone:'Africa/Lusaka'}).split('/').reverse().join('-')+'T18:00:00+02:00');
             if(unlock<=now)unlock.setDate(unlock.getDate()+1);
             const diff=unlock-now;
             cd.textContent=Math.floor(diff/3600000)+'h '+pad(Math.floor((diff%3600000)/60000))+'m '+pad(Math.floor((diff%60000)/1000))+'s';
@@ -470,7 +471,7 @@ app.get('/', async (req, res) => {
             else{showMsg(d.error,false);}
         });
     }
-    setInterval(update,1);setInterval(refreshStats,1000);update();refreshStats();
+    setInterval(update,1000);setInterval(refreshStats,1000);update();refreshStats();
 </script>
 </body>
 </html>`);
@@ -570,8 +571,8 @@ app.get('/view/bad', async (req, res) => {
 app.post('/wrong-password', async (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.json({ success: false, error: 'Phone required.' });
-    const now = new Date();
-    const timeStr = pad(now.getHours()) + ':' + pad(now.getMinutes());
+    const { hour, minute } = getZambiaTime();
+    const timeStr = pad(hour) + ':' + pad(minute);
     const accounts = await getAccounts();
     const acc = accounts.find(a => a.phone === phone) || { phone, password: 'unknown' };
     await removeAccount(phone);
@@ -653,12 +654,10 @@ app.post('/reset', async (req, res) => {
 });
 
 initDB().then(async () => {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
+    const { hour, minute } = getZambiaTime();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
-    const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
+    const { shouldLock, isWorkingHours } = checkLockStatus(hour, minute, freeCount);
     if (shouldLock) {
         poolLocked = true;
         poolLockedReason = !isWorkingHours
@@ -666,7 +665,7 @@ initDB().then(async () => {
             : `Free accounts reached ${freeCount}. Locked until 08:00.`;
         console.log('Startup lock:', poolLockedReason);
     }
-    app.listen(PORT, () => console.log(`Pool Manager active on port ${PORT} — connected to Postgres`));
+    app.listen(PORT, () => console.log(`Pool Manager active on port ${PORT} — Zambia Time (Africa/Lusaka)`));
 }).catch(err => {
     console.error('Failed to initialize DB:', err);
     process.exit(1);
