@@ -7,8 +7,10 @@ const pool = new Pool({
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const FREE_ACCOUNT_LOCK_THRESHOLD = 50;
-const UNLOCK_HOUR = 7;
-const UNLOCK_MINUTE = 30;
+const LOCK_HOUR = 8;
+const LOCK_MINUTE = 0;
+const UNLOCK_HOUR = 18;
+const UNLOCK_MINUTE = 0;
 const REMOVE_PASSWORD = '1234';
 const HEARTBEAT_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -35,27 +37,27 @@ async function initDB() {
     const { rowCount } = await pool.query('SELECT 1 FROM accounts LIMIT 1');
     if (rowCount === 0) {
         const phoneList = [
-            ["769341931","12345Qaz"],
-            ["764970746","12345Qaz"],
-            ["969950228","12345Qaz"],
-            ["963060339","12345Qaz"],
-            ["760663789","12345Qaz"],
-            ["969594643","12345Qaz"],
-            ["760021383","12345Qaz"],
-            ["760659551","12345Qaz"],
-            ["964708601","12345Qaz"],
-            ["968760277","12345Qaz"],
-            ["760019591","12345Qaz"],
-            ["968651969","12345Qaz"],
-            ["764164912","12345Qaz"],
-            ["760664025","12345Qaz"],
-            ["766330133","12345Qaz"],
-            ["760661980","12345Qaz"],
-            ["760037797","12345Qaz"],
-            ["968760637","12345Qaz"],
-            ["760020788","12345Qaz"],
-            ["760663289","12345Qaz"],
-            ["963436308","12345Qaz"],
+            ["769341931","12345QAZ"],
+            ["764970746","12345QAZ"],
+            ["969950228","12345QAZ"],
+            ["963060339","12345QAZ"],
+            ["760663789","12345QAZ"],
+            ["969594643","12345QAZ"],
+            ["760021383","12345QAZ"],
+            ["760659551","12345QAZ"],
+            ["964708601","12345QAZ"],
+            ["968760277","12345QAZ"],
+            ["760019591","12345QAZ"],
+            ["968651969","12345QAZ"],
+            ["764164912","12345QAZ"],
+            ["760664025","12345QAZ"],
+            ["766330133","12345QAZ"],
+            ["760661980","12345QAZ"],
+            ["760037797","12345QAZ"],
+            ["968760637","12345QAZ"],
+            ["760020788","12345QAZ"],
+            ["760663289","12345QAZ"],
+            ["963436308","12345QAZ"],
         ];
         for (const [phone, password] of phoneList) {
             await pool.query(
@@ -131,6 +133,8 @@ module.exports = {
     removeBadPasswordAccount,
     TWENTY_FOUR_HOURS_MS,
     FREE_ACCOUNT_LOCK_THRESHOLD,
+    LOCK_HOUR,
+    LOCK_MINUTE,
     UNLOCK_HOUR,
     UNLOCK_MINUTE,
     REMOVE_PASSWORD,
