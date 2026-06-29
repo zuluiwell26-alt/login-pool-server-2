@@ -13,6 +13,7 @@ const UNLOCK_HOUR = 18;
 const UNLOCK_MINUTE = 0;
 const REMOVE_PASSWORD = '1234';
 const HEARTBEAT_TIMEOUT_MS = 2 * 60 * 1000;
+const TIMEZONE = 'Africa/Lusaka';
 
 async function initDB() {
     await pool.query(`
@@ -120,6 +121,15 @@ async function removeBadPasswordAccount(phone) {
     await pool.query('DELETE FROM bad_password_accounts WHERE phone = $1', [phone]);
 }
 
+function getZambiaTime() {
+    const now = new Date();
+    const zambiaStr = now.toLocaleString('en-GB', { timeZone: TIMEZONE });
+    // Parse "DD/MM/YYYY, HH:MM:SS"
+    const [datePart, timePart] = zambiaStr.split(', ');
+    const [hours, minutes, seconds] = timePart.split(':').map(Number);
+    return { hour: hours, minute: minutes, second: seconds };
+}
+
 module.exports = {
     pool,
     initDB,
@@ -131,6 +141,7 @@ module.exports = {
     getBadPasswordAccounts,
     addBadPasswordAccount,
     removeBadPasswordAccount,
+    getZambiaTime,
     TWENTY_FOUR_HOURS_MS,
     FREE_ACCOUNT_LOCK_THRESHOLD,
     LOCK_HOUR,
@@ -139,4 +150,5 @@ module.exports = {
     UNLOCK_MINUTE,
     REMOVE_PASSWORD,
     HEARTBEAT_TIMEOUT_MS,
+    TIMEZONE,
 };
