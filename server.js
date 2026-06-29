@@ -11,6 +11,8 @@ const {
     removeBadPasswordAccount,
     TWENTY_FOUR_HOURS_MS,
     FREE_ACCOUNT_LOCK_THRESHOLD,
+    LOCK_HOUR,
+    LOCK_MINUTE,
     UNLOCK_HOUR,
     UNLOCK_MINUTE,
     REMOVE_PASSWORD,
@@ -33,6 +35,15 @@ let poolLocked = false;
 let poolLockedReason = '';
 
 function pad(n) { return String(n).padStart(2, '0'); }
+
+function checkLockStatus(hour, minute, freeCount) {
+    // Open between 08:00 and 18:00
+    const afterLock = hour > LOCK_HOUR || (hour === LOCK_HOUR && minute >= LOCK_MINUTE);
+    const beforeUnlock = hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
+    const isWorkingHours = afterLock && beforeUnlock;
+    const isLowAccounts = freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
+    return { shouldLock: !isWorkingHours || isLowAccounts, isWorkingHours, isLowAccounts };
+}
 
 // Auto-free accounts after 24h
 setInterval(async () => {
@@ -67,22 +78,21 @@ setInterval(async () => {
     const minute = now.getMinutes();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
+    const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
 
-    const isNightTime = hour >= 18 || hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
-    const isLowAccounts = freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
-
-    if (isNightTime || isLowAccounts) {
+    if (shouldLock) {
         if (!poolLocked) {
             poolLocked = true;
-            poolLockedReason = isNightTime
-                ? 'Locked at 18:00. Unlocks at 07:30.'
-                : `Free accounts reached ${freeCount}. Locked until 07:30.`;
+            poolLockedReason = !isWorkingHours
+                ? 'Locked at 18:00. Unlocks at 08:00.'
+                : `Free accounts reached ${freeCount}. Locked until 08:00.`;
             console.log(poolLockedReason);
         }
     } else {
         if (poolLocked) {
-            poolLocked = false; poolLockedReason = '';
-            console.log('Pool unlocked at 07:30.');
+            poolLocked = false;
+            poolLockedReason = '';
+            console.log('Pool unlocked at 08:00.');
         }
     }
 }, 10 * 1000);
@@ -368,7 +378,7 @@ app.get('/', async (req, res) => {
             <div class="box-desc desc-free" id="free-desc">Accounts ready</div>
             <div id="unlock-block" style="display:none;">
                 <div class="unlock-timer" id="unlock-countdown">--:--:--</div>
-                <div class="unlock-sub">Unlocks at 07:30</div>
+                <div class="unlock-sub">Unlocks at 18:00</div>
             </div>
             <a href="/view/free" class="view-btn">View <span class="view-count" id="cnt-free">${freeAccounts.length}</span></a>
         </div>
@@ -412,7 +422,7 @@ app.get('/', async (req, res) => {
         document.getElementById('tick').textContent=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
         const cd=document.getElementById('unlock-countdown');
         if(cd&&document.getElementById('unlock-block').style.display!=='none'){
-            const unlock=new Date();unlock.setHours(7,30,0,0);
+            const unlock=new Date();unlock.setHours(18,0,0,0);
             if(unlock<=now)unlock.setDate(unlock.getDate()+1);
             const diff=unlock-now;
             cd.textContent=Math.floor(diff/3600000)+'h '+pad(Math.floor((diff%3600000)/60000))+'m '+pad(Math.floor((diff%60000)/1000))+'s';
@@ -593,7 +603,7 @@ app.post('/remove-bad-password', async (req, res) => {
 });
 
 app.post('/request-login', async (req, res) => {
-    if (poolLocked) return res.json({ success: false, error: `Pool locked until 07:30. ${poolLockedReason}` });
+    if (poolLocked) return res.json({ success: false, error: `Pool locked. ${poolLockedReason}` });
     const accounts = await getAccounts();
     const available = accounts.find(a => a.status === 'FREE');
     if (available) {
@@ -648,13 +658,12 @@ initDB().then(async () => {
     const minute = now.getMinutes();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
-    const isNightTime = hour >= 18 || hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
-    const isLowAccounts = freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
-    if (isNightTime || isLowAccounts) {
+    const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
+    if (shouldLock) {
         poolLocked = true;
-        poolLockedReason = isNightTime
-            ? 'Locked at 18:00. Unlocks at 07:30.'
-            : `Free accounts reached ${freeCount}. Locked until 07:30.`;
+        poolLockedReason = !isWorkingHours
+            ? 'Locked at 18:00. Unlocks at 08:00.'
+            : `Free accounts reached ${freeCount}. Locked until 08:00.`;
         console.log('Startup lock:', poolLockedReason);
     }
     app.listen(PORT, () => console.log(`Pool Manager active on port ${PORT} — connected to Postgres`));
