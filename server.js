@@ -490,21 +490,29 @@ app.get('/', async (req, res) => {
 <script>
     function pad(n){return String(n).padStart(2,'0')}
     function getZambiaTime(){
-        return new Date().toLocaleTimeString('en-GB',{timeZone:'Africa/Lusaka',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        try {
+            return new Date().toLocaleTimeString('en-GB',{timeZone:'Africa/Lusaka',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        } catch(e) {
+            const now = new Date(Date.now() + 2 * 60 * 60 * 1000);
+            return pad(now.getUTCHours()) + ':' + pad(now.getUTCMinutes()) + ':' + pad(now.getUTCSeconds());
+        }
     }
     function update(){
-        document.getElementById('tick').textContent=getZambiaTime()+' CAT';
-        const cd=document.getElementById('unlock-countdown');
-        if(cd&&document.getElementById('unlock-block').style.display!=='none'){
-            const now=new Date();
-            const unlock=new Date(now.toLocaleDateString('en-GB',{timeZone:'Africa/Lusaka'}).split('/').reverse().join('-')+'T18:00:00+02:00');
-            if(unlock<=now)unlock.setDate(unlock.getDate()+1);
-            const diff=unlock-now;
-            cd.textContent=Math.floor(diff/3600000)+'h '+pad(Math.floor((diff%3600000)/60000))+'m '+pad(Math.floor((diff%60000)/1000))+'s';
-        }
+        try {
+            document.getElementById('tick').textContent=getZambiaTime()+' CAT';
+            const cd=document.getElementById('unlock-countdown');
+            if(cd&&document.getElementById('unlock-block').style.display!=='none'){
+                const now=new Date();
+                const unlock=new Date(now.toLocaleDateString('en-GB',{timeZone:'Africa/Lusaka'}).split('/').reverse().join('-')+'T18:00:00+02:00');
+                if(unlock<=now)unlock.setDate(unlock.getDate()+1);
+                const diff=unlock-now;
+                cd.textContent=Math.floor(diff/3600000)+'h '+pad(Math.floor((diff%3600000)/60000))+'m '+pad(Math.floor((diff%60000)/1000))+'s';
+            }
+        } catch(e) { console.log('update error:', e); }
     }
     function refreshStats(){
         fetch('/stats').then(r=>r.json()).then(d=>{
+            try {
             document.getElementById('num-free').textContent=d.free;
             document.getElementById('num-inuse').textContent=d.inUse;
             document.getElementById('num-waiting').textContent=d.waiting;
@@ -532,6 +540,7 @@ app.get('/', async (req, res) => {
                 freeNum.style.color='#3fb950';freeDesc.style.color='#2a6e3a';freeDesc.textContent='Accounts ready';
                 unlockBlock.style.display='none';
             }
+            } catch(e) { console.log('refreshStats error:', e); }
         }).catch(()=>{});
     }
     function showMsg(text,ok){const el=document.getElementById('add-msg');el.textContent=text;el.className='msg '+(ok?'msg-ok':'msg-err');el.style.display='block';setTimeout(()=>el.style.display='none',3000);}
