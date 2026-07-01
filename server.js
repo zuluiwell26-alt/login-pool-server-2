@@ -554,10 +554,10 @@ app.get('/', async (req, res) => {
     function parseAlertId(tabId) {
         // Try format: "ID: 63163 (+260978012009)"
         let match = tabId.match(/ID:\s*(\S+)\s*\(([^)]+)\)/);
-        if (match) return { id: match[1], phone: match[2] };
+        if (match) return { id: match[1], phone: match[2].replace(/^\+260/, '') };
         // Try format: "ID: 63163 +260978012009" (no parentheses)
         match = tabId.match(/ID:\s*(\S+)\s+(\S+)/);
-        if (match) return { id: match[1], phone: match[2] };
+        if (match) return { id: match[1], phone: match[2].replace(/^\+260/, '') };
         // Fallback: strip "ID: " prefix and show rest as id
         const stripped = tabId.replace(/^ID:\s*/, '').trim();
         return { id: stripped, phone: '' };
