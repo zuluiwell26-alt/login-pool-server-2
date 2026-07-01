@@ -2,7 +2,9 @@ const express = require('express');
 const {
     initDB,
     getAccounts,
+    getAccountByTabId,
     claimFreeAccount,
+    reLoginForTab,
     updateAccount,
     addAccount,
     removeAccount,
@@ -48,18 +50,19 @@ function checkLockStatus(hour, minute, freeCount) {
     return { shouldLock: isLockedHours || isLowAccounts, isWorkingHours: !isLockedHours, isLowAccounts };
 }
 
-// Auto-free accounts after 24h
+const IN_USE_TIMEOUT_MS = 5 * 60 * 60 * 1000; // 5 hours
+const HEARTBEAT_SILENCE_TIMEOUT_MS = 10 * 60 * 60 * 1000; // 10 hours
+
+// Auto-free accounts after 24h — sets freed_at so claim order tracks it
 setInterval(async () => {
     const accounts = await getAccounts();
     const now = Date.now();
     for (const acc of accounts) {
         if (acc.status === 'IN-USE' && acc.logoutTime && (now - acc.logoutTime >= TWENTY_FOUR_HOURS_MS)) {
-            await updateAccount(acc.phone, { status: 'FREE', logoutTime: null, logoutTimeStr: null, lastHeartbeat: null });
+            await updateAccount(acc.phone, { status: 'FREE', logoutTime: null, logoutTimeStr: null, lastHeartbeat: null, inUseSince: null, tabId: null, freedAt: now });
         }
     }
 }, 60 * 1000);
-
-// Heartbeat timeout check
 setInterval(async () => {
     const accounts = await getAccounts();
     const now = Date.now();
@@ -69,11 +72,32 @@ setInterval(async () => {
                 const { hour, minute } = getZambiaTime();
                 const timeStr = pad(hour) + ':' + pad(minute);
                 console.log(`Heartbeat lost for ${acc.phone}. Moving to waiting.`);
-                await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (tab closed)' });
+                await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (tab closed)', inUseSince: null, tabId: null });
             }
         }
     }
 }, 10 * 1000);
+
+// 5-hour in-use timeout and 10-hour heartbeat silence timeout
+setInterval(async () => {
+    const accounts = await getAccounts();
+    const now = Date.now();
+    for (const acc of accounts) {
+        if (acc.status === 'IN-USE' && !acc.logoutTime) {
+            const { hour, minute } = getZambiaTime();
+            const timeStr = pad(hour) + ':' + pad(minute);
+            if (acc.inUseSince && now - acc.inUseSince > IN_USE_TIMEOUT_MS) {
+                console.log(`Account ${acc.phone} IN-USE for 5h. Moving to waiting.`);
+                await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (5h timeout)', inUseSince: null, tabId: null });
+                continue;
+            }
+            if (acc.lastHeartbeat && now - acc.lastHeartbeat > HEARTBEAT_SILENCE_TIMEOUT_MS) {
+                console.log(`Account ${acc.phone} no heartbeat for 10h. Moving to waiting.`);
+                await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (10h no heartbeat)', inUseSince: null, tabId: null });
+            }
+        }
+    }
+}, 60 * 1000);
 
 // Pool lock check
 setInterval(async () => {
@@ -116,7 +140,12 @@ app.get('/inuse-stats', async (req, res) => {
     const accounts = await getAccounts();
     const list = accounts
         .filter(a => a.status === 'IN-USE' && !a.logoutTime)
-        .map(a => ({ phone: a.phone, lastHeartbeat: a.lastHeartbeat }));
+        .sort((a, b) => {
+            const aNum = a.tabId ? parseInt(a.tabId.replace('TAB-', '')) : 9999;
+            const bNum = b.tabId ? parseInt(b.tabId.replace('TAB-', '')) : 9999;
+            return aNum - bNum;
+        })
+        .map(a => ({ phone: a.phone, lastHeartbeat: a.lastHeartbeat, tabId: a.tabId }));
     res.json(list);
 });
 
@@ -510,13 +539,26 @@ app.get('/', async (req, res) => {
 
 app.get('/view/free', async (req, res) => {
     const accounts = await getAccounts();
-    const list = accounts.filter(a => a.status === 'FREE');
+    const list = accounts
+        .filter(a => a.status === 'FREE')
+        .sort((a, b) => {
+            if (a.freedAt && b.freedAt) return a.freedAt - b.freedAt;
+            if (a.freedAt) return -1;
+            if (b.freedAt) return 1;
+            return 0;
+        });
     res.send(listPage('Free Accounts', list.length + ' accounts ready', list, 'free'));
 });
 
 app.get('/view/inuse', async (req, res) => {
     const accounts = await getAccounts();
-    const list = accounts.filter(a => a.status === 'IN-USE' && !a.logoutTime);
+    const list = accounts
+        .filter(a => a.status === 'IN-USE' && !a.logoutTime)
+        .sort((a, b) => {
+            const aNum = a.tabId ? parseInt(a.tabId.replace('TAB-', '')) : 9999;
+            const bNum = b.tabId ? parseInt(b.tabId.replace('TAB-', '')) : 9999;
+            return aNum - bNum;
+        });
     const rowsHtml = list.length
         ? list.map((r, i) => `
             <div class="row" data-phone="${r.phone}">
@@ -571,12 +613,12 @@ app.get('/view/inuse', async (req, res) => {
             data.forEach((acc,i)=>{
                 const el=document.getElementById('hb-'+i);
                 if(!el) return;
-                if(!acc.lastHeartbeat){el.className='row-hb hb-warning';el.textContent='⚡ Waiting for first heartbeat...';return;}
+                if(!acc.lastHeartbeat){el.className='row-hb hb-warning';el.textContent='⚡ Waiting for first heartbeat...'+(acc.tabId?' — '+acc.tabId:'');return;}
                 const elapsed=Date.now()-acc.lastHeartbeat;
                 const s=Math.floor(elapsed/1000);
-                if(elapsed<5000){el.className='row-hb hb-alive';el.textContent='● Heartbeat OK — '+s+'s ago';}
-                else if(elapsed<30000){el.className='row-hb hb-warning';el.textContent='◐ Heartbeat slow — '+s+'s ago';}
-                else{el.className='row-hb hb-dead';el.textContent='✕ No heartbeat — '+s+'s ago';}
+                if(elapsed<5000){el.className='row-hb hb-alive';el.textContent='● Heartbeat OK — '+s+'s ago'+(acc.tabId?' — '+acc.tabId:'');}
+                else if(elapsed<30000){el.className='row-hb hb-warning';el.textContent='◐ Heartbeat slow — '+s+'s ago'+(acc.tabId?' — '+acc.tabId:'');}
+                else{el.className='row-hb hb-dead';el.textContent='✕ No heartbeat — '+s+'s ago'+(acc.tabId?' — '+acc.tabId:'');}
             });
         }).catch(()=>{});
     }
@@ -590,7 +632,8 @@ app.get('/view/inuse', async (req, res) => {
 app.get('/view/waiting', async (req, res) => {
     const accounts = await getAccounts();
     const list = accounts.filter(a => a.status === 'IN-USE' && a.logoutTime)
-        .map(a => ({ phone: a.phone, freeAt: a.logoutTime + TWENTY_FOUR_HOURS_MS, logoutTimeStr: a.logoutTimeStr }));
+        .map(a => ({ phone: a.phone, freeAt: a.logoutTime + TWENTY_FOUR_HOURS_MS, logoutTimeStr: a.logoutTimeStr }))
+        .sort((a, b) => a.freeAt - b.freeAt);
     res.send(waitingPage(list));
 });
 
@@ -636,8 +679,12 @@ app.post('/remove-bad-password', async (req, res) => {
 
 app.post('/request-login', async (req, res) => {
     if (poolLocked) return res.json({ success: false, error: `Pool locked. ${poolLockedReason}` });
+    const { tabId } = req.body;
+    if (!tabId) return res.json({ success: false, error: 'Tab ID required. No account will be assigned without one.' });
     try {
-        const claimed = await claimFreeAccount(Date.now());
+        const { hour, minute } = getZambiaTime();
+        const timeStr = pad(hour) + ':' + pad(minute);
+        const claimed = await reLoginForTab(tabId, Date.now(), timeStr);
         if (claimed) {
             return res.json({ success: true, phone: claimed.phone, password: claimed.password });
         }
@@ -664,7 +711,7 @@ app.post('/logout', async (req, res) => {
     const accounts = await getAccounts();
     const account = accounts.find(a => a.phone === phone);
     if (account) {
-        await updateAccount(phone, { logoutTime: Date.now(), logoutTimeStr: logoutTime, lastHeartbeat: null });
+        await updateAccount(phone, { logoutTime: Date.now(), logoutTimeStr: logoutTime, lastHeartbeat: null, inUseSince: null, tabId: null });
         return res.json({ success: true, message: `Account ${phone} logged out. Will free after 24h.` });
     }
     return res.json({ success: false, error: 'Account not found.' });
