@@ -637,10 +637,19 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         }).join('');
         var el = document.getElementById('note-printable');
         html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }).then(function(canvas) {
-            var link = document.createElement('a');
-            link.download = 'box-' + (bi+1) + '-ids.png';
-            link.href = canvas.toDataURL('image/png');
-            link.click();
+            canvas.toBlob(function(blob) {
+                if (!blob) { alert('Could not generate image.'); return; }
+                var url = URL.createObjectURL(blob);
+                var link = document.createElement('a');
+                link.download = 'box-' + (bi+1) + '-ids.png';
+                link.href = url;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+            }, 'image/png');
+        }).catch(function(err) {
+            alert('Failed to save image: ' + err.message);
         });
     }
 
