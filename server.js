@@ -600,8 +600,8 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                     '</div><div class="anum">' + (ri + 1) + '</div></div>';
             }).join('');
             var saveBtn = full ? '<div style="display:flex;gap:8px;padding:10px 12px;background:#0d1117;">' +
-                '<button onclick="saveIds(' + bi + ')" style="flex:1;background:#3b82f6;color:#fff;border:none;padding:10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">&#128190; Save IDs</button>' +
-                '<button onclick="saveAll(' + bi + ')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">&#128190; Save IDs &amp; Numbers</button>' +
+                '<button onclick="saveIds(' + bi + ')" style="flex:1;background:#3b82f6;color:#fff;border:none;padding:10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">&#128203; Copy IDs</button>' +
+                '<button onclick="saveAll(' + bi + ')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">&#128203; Copy IDs &amp; Numbers</button>' +
                 '</div>' : '';
             return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
                 '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
@@ -624,38 +624,38 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
         return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
     }
-    function renderNote(title, rowsHtml) {
-        document.getElementById('note-title').textContent = title;
-        document.getElementById('note-date').textContent = new Date().toLocaleString('en-GB');
-        document.getElementById('note-rows').innerHTML = rowsHtml;
-    }
-    function downloadImage(filename) {
-        html2canvas(document.getElementById('note-printable'), { scale: 2, backgroundColor: '#ffffff', useCORS: true }).then(function(canvas) {
-            var link = document.createElement('a');
-            link.download = filename;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
-        });
-    }
     function saveIds(bi) {
         var box = _boxes[bi];
         if (!box) return;
-        renderNote('BOX ' + (bi+1) + ' — IDs (' + box.length + '/30 FULL)',
+        var text = 'BOX ' + (bi+1) + ' — IDs\n' + new Date().toLocaleString('en-GB') + '\n\n' +
             box.map(function(a, ri) {
                 var p = parseIdForPrint(a.tabId);
-                return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span></div>';
-            }).join(''));
-        downloadImage('box-' + (bi+1) + '-ids.png');
+                return (ri+1) + '. ' + p.id;
+            }).join('\n');
+        copyText(text, 'IDs copied!');
     }
     function saveAll(bi) {
         var box = _boxes[bi];
         if (!box) return;
-        renderNote('BOX ' + (bi+1) + ' — IDs & Numbers (' + box.length + '/30 FULL)',
+        var text = 'BOX ' + (bi+1) + ' — IDs & Numbers\n' + new Date().toLocaleString('en-GB') + '\n\n' +
             box.map(function(a, ri) {
                 var p = parseIdForPrint(a.tabId);
-                return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span><span class="note-sep">|</span><span class="note-phone">' + p.phone + '</span></div>';
-            }).join(''));
-        downloadImage('box-' + (bi+1) + '-all.png');
+                return (ri+1) + '. ' + p.id + ' | ' + p.phone;
+            }).join('\n');
+        copyText(text, 'IDs & Numbers copied!');
+    }
+    function copyText(text, msg) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() { alert(msg); }).catch(function() { fallbackCopy(text, msg); });
+        } else { fallbackCopy(text, msg); }
+    }
+    function fallbackCopy(text, msg) {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0';
+        ta.style.opacity = '0'; document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        try { document.execCommand('copy'); alert(msg); } catch(e) { alert('Copy failed. Text:\n\n' + text); }
+        document.body.removeChild(ta);
     }
 
     document.getElementById('view-btn').addEventListener('click', function() {
