@@ -327,6 +327,7 @@ app.get('/', async (req, res) => {
 <head>
 <title>Login Pool Manager</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -458,14 +459,34 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
   </div>
 </div>
 
+<div id="note-printable" style="position:fixed;left:-9999px;top:0;width:400px;background:#fff;padding:32px 28px;font-family:sans-serif;">
+  <div id="note-title" style="font-size:16px;font-weight:900;color:#0f172a;margin-bottom:4px;"></div>
+  <div id="note-date" style="font-size:11px;color:#94a3b8;margin-bottom:20px;"></div>
+  <hr style="border:none;border-top:2px solid #e2e8f0;margin-bottom:16px;">
+  <div id="note-rows"></div>
+  <div style="margin-top:20px;font-size:10px;color:#cbd5e1;text-align:center;">Login Pool Server 2</div>
+</div>
+
+<style>
+.note-row{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#0f172a;}
+.note-row:last-child{border-bottom:none;}
+.note-num{font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;}
+.note-id{font-weight:800;}
+.note-sep{color:#cbd5e1;}
+.note-phone{font-family:monospace;font-size:12px;color:#334155;}
+</style>
+
 <script>
 (function() {
     // ── Clock ──────────────────────────────────────────────────────
     function pad(n) { return String(n).padStart(2, '0'); }
     function zambiaTime() {
-        // UTC+2 manual calculation — works on all browsers
-        var d = new Date(Date.now() + 2 * 3600000);
-        return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+        try {
+            return new Date().toLocaleTimeString('en-GB', { timeZone: 'Africa/Lusaka', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch(e) {
+            var d = new Date(Date.now() + 2 * 3600000);
+            return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+        }
     }
     setInterval(function() {
         document.getElementById('tick').textContent = zambiaTime() + ' CAT';
@@ -595,21 +616,32 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
     }
 
     var _boxes = [];
+    function parseIdForPrint(tabId) {
+        var m = tabId.match(/ID:\\s*(\\S+)\\s*\\(([^)]+)\\)/);
+        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
+        m = tabId.match(/ID:\\s*(\\S+)\\s+(\\S+)/);
+        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
+        return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
+    }
     function saveBox(bi) {
         var box = _boxes[bi];
         if (!box) return;
-        var lines = box.map(function(a, ri) {
-            var p = parseId(a.tabId);
-            return (ri + 1) + '. ' + p.id + ' | ' + p.phone;
-        }).join('\n');
-        var text = 'BOX ' + (bi + 1) + ' — IDs & Numbers (' + box.length + '/30)\n' +
-            new Date().toLocaleString() + '\n' +
-            '================================\n' + lines;
-        var blob = new Blob([text], { type: 'text/plain' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url; a.download = 'box-' + (bi + 1) + '-ids.txt';
-        a.click(); URL.revokeObjectURL(url);
+        var noteTitle = document.getElementById('note-title');
+        var noteDate = document.getElementById('note-date');
+        var noteRows = document.getElementById('note-rows');
+        noteTitle.textContent = 'BOX ' + (bi + 1) + ' — IDs & Numbers (' + box.length + '/30 FULL)';
+        noteDate.textContent = new Date().toLocaleString('en-GB');
+        noteRows.innerHTML = box.map(function(a, ri) {
+            var p = parseIdForPrint(a.tabId);
+            return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span><span class="note-sep">|</span><span class="note-phone">' + p.phone + '</span></div>';
+        }).join('');
+        var el = document.getElementById('note-printable');
+        html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }).then(function(canvas) {
+            var link = document.createElement('a');
+            link.download = 'box-' + (bi+1) + '-ids.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        });
     }
 
     document.getElementById('view-btn').addEventListener('click', function() {
