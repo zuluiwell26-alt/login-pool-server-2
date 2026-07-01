@@ -573,7 +573,7 @@ app.get('/', async (req, res) => {
             const isFull = box.length >= BOX_SIZE;
             const rows = box.map((a, ri) => {
                 const p = parseAlertId(a.tabId);
-                return '<div style="display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid #1a1a2e;gap:10px;">' +
+                return '<div style="display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid #1a1a2e;gap:8px;">' +
                     '<div style="flex:1;display:flex;gap:10px;">' +
                     '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:800;color:#e6edf3;">' + p.id + '</div>' +
                     '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;color:#e6edf3;font-family:monospace;">' + p.phone + '</div>' +
