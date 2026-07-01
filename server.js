@@ -660,6 +660,7 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
             alert('Save failed: ' + (err && err.message ? err.message : err));
         }
     }
+    window.saveBox = saveBox;
 
     document.getElementById('view-btn').addEventListener('click', function() {
         document.getElementById('view-btn').style.display = 'none';
