@@ -552,9 +552,15 @@ app.get('/', async (req, res) => {
     let _alertBoxes = [];
 
     function parseAlertId(tabId) {
-        const match = tabId.match(/ID:\s*(\S+)\s*\(([^)]+)\)/);
+        // Try format: "ID: 63163 (+260978012009)"
+        let match = tabId.match(/ID:\s*(\S+)\s*\(([^)]+)\)/);
         if (match) return { id: match[1], phone: match[2] };
-        return { id: tabId, phone: '—' };
+        // Try format: "ID: 63163 +260978012009" (no parentheses)
+        match = tabId.match(/ID:\s*(\S+)\s+(\S+)/);
+        if (match) return { id: match[1], phone: match[2] };
+        // Fallback: strip "ID: " prefix and show rest as id
+        const stripped = tabId.replace(/^ID:\s*/, '').trim();
+        return { id: stripped, phone: '' };
     }
 
     function renderAlerts(alerts) {
@@ -576,7 +582,7 @@ app.get('/', async (req, res) => {
                 return '<div style="display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid #1a1a2e;gap:8px;">' +
                     '<div style="flex:1;display:flex;gap:10px;">' +
                     '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:800;color:#e6edf3;">' + p.id + '</div>' +
-                    '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;color:#e6edf3;font-family:monospace;">' + p.phone + '</div>' +
+                    (p.phone ? '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;color:#e6edf3;font-family:monospace;">' + p.phone + '</div>' : '') +
                     '</div><div style="font-size:12px;font-weight:800;color:#4b5563;min-width:24px;text-align:right;">' + (ri + 1) + '</div></div>';
             }).join('');
             return '<div style="margin-bottom:16px;">' +
