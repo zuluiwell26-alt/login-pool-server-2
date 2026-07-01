@@ -29,8 +29,6 @@ function checkLockStatus(hour, minute, freeCount) {
     const afterLock = hour > LOCK_HOUR || (hour === LOCK_HOUR && minute >= LOCK_MINUTE);
     const beforeUnlock = hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
     const isLockedHours = afterLock && beforeUnlock;
-    // Low account lock ONLY applies during working hours (08:00-18:00)
-    // After 18:00, accounts are given out freely even if below 50
     const isLowAccounts = isLockedHours && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
     return { shouldLock: isLockedHours || isLowAccounts, isWorkingHours: !isLockedHours, isLowAccounts };
 }
@@ -38,7 +36,6 @@ function checkLockStatus(hour, minute, freeCount) {
 const IN_USE_TIMEOUT_MS = 5 * 60 * 60 * 1000;
 const HEARTBEAT_SILENCE_TIMEOUT_MS = 10 * 60 * 60 * 1000;
 
-// Auto-free after 24h
 setInterval(async () => {
     try {
         const accounts = await getAccounts();
@@ -51,7 +48,6 @@ setInterval(async () => {
     } catch(e) { console.error('auto-free error:', e); }
 }, 60 * 1000);
 
-// Heartbeat timeout
 setInterval(async () => {
     try {
         const accounts = await getAccounts();
@@ -67,7 +63,6 @@ setInterval(async () => {
     } catch(e) { console.error('heartbeat-check error:', e); }
 }, 10 * 1000);
 
-// 5h in-use and 10h silence timeout
 setInterval(async () => {
     try {
         const accounts = await getAccounts();
@@ -88,7 +83,6 @@ setInterval(async () => {
     } catch(e) { console.error('timeout-check error:', e); }
 }, 60 * 1000);
 
-// Lock check
 setInterval(async () => {
     try {
         const { hour, minute } = getZambiaTime();
@@ -106,8 +100,6 @@ setInterval(async () => {
         }
     } catch(e) { console.error('lock-check error:', e); }
 }, 10 * 1000);
-
-// ── API ENDPOINTS ──────────────────────────────────────────────────────────
 
 app.get('/stats', async (req, res) => {
     try {
@@ -267,8 +259,6 @@ app.post('/reset', async (req, res) => {
     } catch(e) { res.status(500).json({ success: false }); }
 });
 
-// ── VIEW PAGES ─────────────────────────────────────────────────────────────
-
 app.get('/view/free', async (req, res) => {
     try {
         const accounts = await getAccounts();
@@ -313,8 +303,6 @@ function listPage(title, subtitle, rows, showRemove) {
     return `<!DOCTYPE html><html><head><title>${title}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;background:#04060a;padding:20px;min-height:100vh}.page{background:#0d1117;border-radius:16px;max-width:520px;margin:0 auto;overflow:hidden}.ph{padding:16px 20px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:12px}.back{background:#161b22;border:1px solid #30363d;color:#8b949e;padding:6px 12px;border-radius:8px;font-size:12px;text-decoration:none}.pt{font-size:15px;font-weight:500;color:#e6edf3}.ps{font-size:11px;color:#4b5563}.sw{padding:14px 20px;border-bottom:1px solid #21262d}.si{width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 14px;border-radius:8px;font-size:13px;outline:none}.row{display:flex;align-items:center;padding:12px 20px;border-bottom:1px solid #161b22;gap:10px}.row:last-child{border-bottom:none}.rn{font-size:12px;color:#4b5563;width:26px}.ri{flex:1}.rp{font-size:14px;color:#e6edf3;font-weight:500}.rs{font-size:11px;color:#4b5563;margin-top:2px}.rt{font-size:10px;color:#f87171;margin-top:2px}.rb{background:#2d0a0a;border:1px solid #7f1d1d;color:#f87171;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer}.empty{padding:40px;text-align:center;color:#4b5563;font-size:13px}.hidden{display:none}.pm{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}.pb{background:#0d1117;border:1.5px solid #21262d;border-radius:16px;padding:28px 24px;width:100%;max-width:320px;text-align:center}.ptt{font-size:15px;font-weight:500;color:#e6edf3;margin-bottom:6px}.ps2{font-size:12px;color:#4b5563;margin-bottom:20px}.pi{width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:12px;border-radius:8px;font-size:16px;outline:none;text-align:center;letter-spacing:4px;margin-bottom:14px}.pr{display:flex;gap:10px}.pc{flex:1;background:#161b22;border:1px solid #30363d;color:#8b949e;padding:10px;border-radius:8px;font-size:13px;cursor:pointer}.pco{flex:1;background:#7f1d1d;border:none;color:#f87171;padding:10px;border-radius:8px;font-size:13px;cursor:pointer}.pe{color:#f87171;font-size:12px;margin-top:10px;display:none}</style></head><body><div class="page"><div class="ph"><a href="/" class="back">&#8592; Back</a><div><div class="pt">${title}</div><div class="ps">${subtitle}</div></div></div><div class="sw"><input class="si" placeholder="Search..." oninput="filterRows(this.value)"></div><div id="list">${rows}</div></div>${showRemove ? `<div class="pm" id="modal" style="display:none"><div class="pb"><div class="ptt">&#128274; Confirm</div><div class="ps2">Enter password to remove</div><input class="pi" id="pin" type="password" maxlength="10" placeholder="••••"><div class="pr"><button class="pc" onclick="closeModal()">Cancel</button><button class="pco" onclick="confirmRemove()">Remove</button></div><div class="pe" id="perr">Wrong password</div></div></div>` : ''}<script>let pending=null;function removeAccount(p){pending=p;document.getElementById('pin').value='';document.getElementById('perr').style.display='none';document.getElementById('modal').style.display='flex';}function closeModal(){pending=null;document.getElementById('modal').style.display='none';}function confirmRemove(){const pin=document.getElementById('pin').value.trim();fetch('/remove-account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:pending,pin})}).then(r=>r.json()).then(d=>{if(d.success){closeModal();document.querySelector('[data-phone="'+pending+'"]').remove();}else{document.getElementById('perr').style.display='block';}});}document.addEventListener('DOMContentLoaded',()=>{const pi=document.getElementById('pin');if(pi){pi.addEventListener('keydown',e=>{if(e.key==='Enter')confirmRemove();if(e.key==='Escape')closeModal();});}});function filterRows(q){document.querySelectorAll('.row').forEach(r=>{r.classList.toggle('hidden',q!==''&&!r.dataset.phone.includes(q));});}</script></body></html>`;
 }
 
-// ── MAIN DASHBOARD ─────────────────────────────────────────────────────────
-
 app.get('/', async (req, res) => {
     try {
         const accounts = await getAccounts();
@@ -327,7 +315,6 @@ app.get('/', async (req, res) => {
 <head>
 <title>Login Pool Manager</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -400,7 +387,6 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
       <span id="pill-text">${poolLocked ? 'Locked' : 'Live'}</span>
     </div>
   </div>
-
   <div class="boxes">
     <div class="box ${poolLocked ? 'box-free locked-box' : 'box-free'}" id="free-box">
       <div class="bl ${poolLocked ? 'c-locked' : 'c-free'}" id="free-label">${poolLocked ? '&#128274; Locked' : '&#10003; Free'}</div>
@@ -431,7 +417,6 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
       <a href="/view/bad" class="vbtn">View <span class="vcnt" id="cnt-bad">${badPasswordAccounts.length}</span></a>
     </div>
   </div>
-
   <div class="add-box">
     <div class="add-title">&#43; Add account</div>
     <div class="add-row">
@@ -441,7 +426,6 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
     </div>
     <div class="msg" id="add-msg"></div>
   </div>
-
   <div class="alerts-area">
     <div class="abtn-row">
       <button class="abtn" id="view-btn">&#128065;&#65039; View IDs &amp; Numbers</button>
@@ -452,44 +436,24 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
       <div id="acontainer"><div class="aempty">No low balance accounts yet...</div></div>
     </div>
   </div>
-
   <div class="footer">
     <span class="tick" id="tick">--:--:-- CAT</span>
     <span class="hint">Live data &middot; Postgres &middot; Zambia Time</span>
   </div>
 </div>
-
-<div id="note-printable" style="position:fixed;left:-9999px;top:0;width:400px;background:#fff;padding:32px 28px;font-family:sans-serif;">
-  <div id="note-title" style="font-size:16px;font-weight:900;color:#0f172a;margin-bottom:4px;"></div>
-  <div id="note-date" style="font-size:11px;color:#94a3b8;margin-bottom:20px;"></div>
-  <hr style="border:none;border-top:2px solid #e2e8f0;margin-bottom:16px;">
-  <div id="note-rows"></div>
-  <div style="margin-top:20px;font-size:10px;color:#cbd5e1;text-align:center;">Login Pool Server 2</div>
-</div>
-
-<style>
-.note-row{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#0f172a;}
-.note-row:last-child{border-bottom:none;}
-.note-num{font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;}
-.note-id{font-weight:800;}
-.note-sep{color:#cbd5e1;}
-.note-phone{font-family:monospace;font-size:12px;color:#334155;}
-</style>
-
 <script>
 (function() {
-    // ── Clock ──────────────────────────────────────────────────────
     function pad(n) { return String(n).padStart(2, '0'); }
+
+    // Clock — pure UTC+2, no locale API needed
     function zambiaTime() {
         var d = new Date(Date.now() + 2 * 3600000);
         return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
     }
-    setInterval(function() {
-        document.getElementById('tick').textContent = zambiaTime() + ' CAT';
-    }, 1000);
+    setInterval(function() { document.getElementById('tick').textContent = zambiaTime() + ' CAT'; }, 1000);
     document.getElementById('tick').textContent = zambiaTime() + ' CAT';
 
-    // ── Stats polling ──────────────────────────────────────────────
+    // Stats
     function refreshStats() {
         fetch('/stats').then(function(r) { return r.json(); }).then(function(d) {
             document.getElementById('num-free').textContent = d.free;
@@ -518,19 +482,15 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                 freeDesc.className = 'bd d-locked';
                 freeDesc.textContent = d.reason;
                 unlockBlock.style.display = 'block';
-                // Unlock countdown
                 var now = new Date();
-                var h = now.getUTCHours() + 2; // Zambia UTC+2
+                var h = now.getUTCHours() + 2;
                 if (h >= 24) h -= 24;
-                var unlockMs = new Date(Date.now() + ((18 - h) * 3600000) - (now.getUTCMinutes() * 60000) - (now.getUTCSeconds() * 1000));
-                if (unlockMs < Date.now()) unlockMs = new Date(unlockMs.getTime() + 86400000);
-                var diff = unlockMs - Date.now();
-                if (diff > 0) {
-                    var uh = Math.floor(diff / 3600000);
-                    var um = Math.floor((diff % 3600000) / 60000);
-                    var us = Math.floor((diff % 60000) / 1000);
-                    document.getElementById('unlock-countdown').textContent = uh + 'h ' + pad(um) + 'm ' + pad(us) + 's';
-                }
+                var diff = ((18 - h) * 3600 - now.getUTCMinutes() * 60 - now.getUTCSeconds()) * 1000;
+                if (diff < 0) diff += 86400000;
+                var uh = Math.floor(diff / 3600000);
+                var um = Math.floor((diff % 3600000) / 60000);
+                var us = Math.floor((diff % 60000) / 1000);
+                document.getElementById('unlock-countdown').textContent = uh + 'h ' + pad(um) + 'm ' + pad(us) + 's';
             } else {
                 pill.className = 'pill pill-live';
                 pill.querySelector('.dot').className = 'dot dot-live';
@@ -548,7 +508,7 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
     setInterval(refreshStats, 2000);
     refreshStats();
 
-    // ── Add Account ────────────────────────────────────────────────
+    // Add account
     function showMsg(text, ok) {
         var el = document.getElementById('add-msg');
         el.textContent = text;
@@ -567,9 +527,10 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         }).catch(function() { showMsg('Network error', false); });
     });
 
-    // ── Alerts Panel ───────────────────────────────────────────────
+    // Alerts panel
     var BOX_SIZE = 30;
     var panelOpen = false;
+    var _boxes = [];
 
     function parseId(tabId) {
         var m = tabId.match(/ID:\\s*(\\S+)\\s*\\(([^)]+)\\)/);
@@ -579,11 +540,36 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
     }
 
+    function copyText(text, msg) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() { alert(msg); }).catch(function() { fallback(text, msg); });
+        } else { fallback(text, msg); }
+    }
+    function fallback(text, msg) {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        try { document.execCommand('copy'); alert(msg); } catch(e) { alert('Copy failed. Text:\n\n' + text); }
+        document.body.removeChild(ta);
+    }
+    function saveIds(bi) {
+        var box = _boxes[bi]; if (!box) return;
+        var text = 'BOX ' + (bi+1) + ' - IDs\n\n' + box.map(function(a, ri) { return (ri+1) + '. ' + parseId(a.tabId).id; }).join('\n');
+        copyText(text, 'IDs copied!');
+    }
+    function saveAll(bi) {
+        var box = _boxes[bi]; if (!box) return;
+        var text = 'BOX ' + (bi+1) + ' - IDs & Numbers\n\n' + box.map(function(a, ri) { var p = parseId(a.tabId); return (ri+1) + '. ' + p.id + ' | ' + p.phone; }).join('\n');
+        copyText(text, 'IDs & Numbers copied!');
+    }
+    window.saveIds = saveIds;
+    window.saveAll = saveAll;
+
     function renderAlerts(data) {
         var container = document.getElementById('acontainer');
         var unique = []; var seen = {};
         data.forEach(function(a) { if (!seen[a.tabId]) { seen[a.tabId] = true; unique.push(a); } });
-        if (unique.length === 0) { container.innerHTML = '<div class="aempty">No low balance accounts yet...</div>'; return; }
+        if (unique.length === 0) { container.innerHTML = '<div class="aempty">No low balance accounts yet...</div>'; _boxes = []; return; }
         var boxes = [];
         for (var i = 0; i < unique.length; i += BOX_SIZE) boxes.push(unique.slice(i, i + BOX_SIZE));
         _boxes = boxes;
@@ -593,88 +579,38 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                 var p = parseId(a.tabId);
                 return '<div class="arow"><div class="achips"><div class="achip"><div class="achip-id">' + p.id + '</div></div>' +
                     (p.phone ? '<div class="achip"><div class="achip-ph">' + p.phone + '</div></div>' : '') +
-                    '</div><div class="anum">' + (ri + 1) + '</div></div>';
+                    '</div><div class="anum">' + (ri+1) + '</div></div>';
             }).join('');
-            var saveBtn = full ? '<div style="display:flex;gap:8px;padding:10px 12px;background:#0d1117;">' +
+            var saveBtns = full ? '<div style="display:flex;gap:8px;padding:10px 12px;background:#0d1117;">' +
                 '<button onclick="saveIds(' + bi + ')" style="flex:1;background:#3b82f6;color:#fff;border:none;padding:10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">&#128203; Copy IDs</button>' +
                 '<button onclick="saveAll(' + bi + ')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">&#128203; Copy IDs &amp; Numbers</button>' +
                 '</div>' : '';
-            return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
+            return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi+1) + '</div>' +
                 '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
-                '<div class="abox-body">' + rowsHtml + '</div>' + saveBtn + '</div>';
+                '<div class="abox-body">' + rowsHtml + '</div>' + saveBtns + '</div>';
         }).join('');
     }
 
     function pollAlerts() {
-        fetch('/alerts').then(function(r) { return r.json(); }).then(function(data) {
-            renderAlerts(data);
-        }).catch(function() {});
+        fetch('/alerts').then(function(r) { return r.json(); }).then(function(data) { renderAlerts(data); }).catch(function() {});
         if (panelOpen) setTimeout(pollAlerts, 5000);
-    }
-
-    var _boxes = [];
-    function parseIdForPrint(tabId) {
-        var m = tabId.match(/ID:\\s*(\\S+)\\s*\\(([^)]+)\\)/);
-        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
-        m = tabId.match(/ID:\\s*(\\S+)\\s+(\\S+)/);
-        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
-        return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
-    }
-    function saveIds(bi) {
-        var box = _boxes[bi];
-        if (!box) return;
-        var text = 'BOX ' + (bi+1) + ' — IDs\n' + new Date().toLocaleString('en-GB') + '\n\n' +
-            box.map(function(a, ri) {
-                var p = parseIdForPrint(a.tabId);
-                return (ri+1) + '. ' + p.id;
-            }).join('\n');
-        copyText(text, 'IDs copied!');
-    }
-    function saveAll(bi) {
-        var box = _boxes[bi];
-        if (!box) return;
-        var text = 'BOX ' + (bi+1) + ' — IDs & Numbers\n' + new Date().toLocaleString('en-GB') + '\n\n' +
-            box.map(function(a, ri) {
-                var p = parseIdForPrint(a.tabId);
-                return (ri+1) + '. ' + p.id + ' | ' + p.phone;
-            }).join('\n');
-        copyText(text, 'IDs & Numbers copied!');
-    }
-    function copyText(text, msg) {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(function() { alert(msg); }).catch(function() { fallbackCopy(text, msg); });
-        } else { fallbackCopy(text, msg); }
-    }
-    function fallbackCopy(text, msg) {
-        var ta = document.createElement('textarea');
-        ta.value = text; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0';
-        ta.style.opacity = '0'; document.body.appendChild(ta);
-        ta.focus(); ta.select();
-        try { document.execCommand('copy'); alert(msg); } catch(e) { alert('Copy failed. Text:\n\n' + text); }
-        document.body.removeChild(ta);
     }
 
     document.getElementById('view-btn').addEventListener('click', function() {
         document.getElementById('view-btn').style.display = 'none';
         document.getElementById('apanel').style.display = 'block';
-        panelOpen = true;
-        pollAlerts();
+        panelOpen = true; pollAlerts();
     });
-
     document.getElementById('hide-btn').addEventListener('click', function() {
         document.getElementById('apanel').style.display = 'none';
         document.getElementById('view-btn').style.display = 'flex';
         panelOpen = false;
     });
-
     document.getElementById('clear-btn').addEventListener('click', function() {
         var pin = prompt('Enter PIN to clear alerts:');
         if (!pin) return;
         if (pin === '1234') {
-            fetch('/clear-alerts', { method: 'POST' }).then(function() {
-                renderAlerts([]);
-                alert('Alerts cleared!');
-            }).catch(function() { alert('Error'); });
+            fetch('/clear-alerts', { method: 'POST' }).then(function() { renderAlerts([]); alert('Alerts cleared!'); }).catch(function() { alert('Error'); });
         } else { alert('Wrong PIN'); }
     });
 })();
