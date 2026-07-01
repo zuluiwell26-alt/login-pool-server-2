@@ -29,7 +29,9 @@ function checkLockStatus(hour, minute, freeCount) {
     const afterLock = hour > LOCK_HOUR || (hour === LOCK_HOUR && minute >= LOCK_MINUTE);
     const beforeUnlock = hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
     const isLockedHours = afterLock && beforeUnlock;
-    const isLowAccounts = freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
+    // Low account lock ONLY applies during working hours (08:00-18:00)
+    // After 18:00, accounts are given out freely even if below 50
+    const isLowAccounts = isLockedHours && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
     return { shouldLock: isLockedHours || isLowAccounts, isWorkingHours: !isLockedHours, isLowAccounts };
 }
 
@@ -567,6 +569,7 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         if (unique.length === 0) { container.innerHTML = '<div class="aempty">No low balance accounts yet...</div>'; return; }
         var boxes = [];
         for (var i = 0; i < unique.length; i += BOX_SIZE) boxes.push(unique.slice(i, i + BOX_SIZE));
+        _boxes = boxes;
         container.innerHTML = boxes.map(function(box, bi) {
             var full = box.length >= BOX_SIZE;
             var rowsHtml = box.map(function(a, ri) {
@@ -575,9 +578,12 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                     (p.phone ? '<div class="achip"><div class="achip-ph">' + p.phone + '</div></div>' : '') +
                     '</div><div class="anum">' + (ri + 1) + '</div></div>';
             }).join('');
+            var saveBtn = full ? '<div style="display:flex;gap:8px;padding:10px 12px;background:#0d1117;">' +
+                '<button onclick="saveBox(' + bi + ')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; Save IDs &amp; Numbers</button>' +
+                '</div>' : '';
             return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
                 '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
-                '<div class="abox-body">' + rowsHtml + '</div></div>';
+                '<div class="abox-body">' + rowsHtml + '</div>' + saveBtn + '</div>';
         }).join('');
     }
 
@@ -586,6 +592,24 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
             renderAlerts(data);
         }).catch(function() {});
         if (panelOpen) setTimeout(pollAlerts, 5000);
+    }
+
+    var _boxes = [];
+    function saveBox(bi) {
+        var box = _boxes[bi];
+        if (!box) return;
+        var lines = box.map(function(a, ri) {
+            var p = parseId(a.tabId);
+            return (ri + 1) + '. ' + p.id + ' | ' + p.phone;
+        }).join('\n');
+        var text = 'BOX ' + (bi + 1) + ' — IDs & Numbers (' + box.length + '/30)\n' +
+            new Date().toLocaleString() + '\n' +
+            '================================\n' + lines;
+        var blob = new Blob([text], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = 'box-' + (bi + 1) + '-ids.txt';
+        a.click(); URL.revokeObjectURL(url);
     }
 
     document.getElementById('view-btn').addEventListener('click', function() {
