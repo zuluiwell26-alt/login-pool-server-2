@@ -33,6 +33,15 @@ async function initDB() {
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tab_id TEXT DEFAULT NULL;`);
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS freed_at BIGINT DEFAULT NULL;`);
     await pool.query(`
+        CREATE TABLE IF NOT EXISTS alerts (
+            id SERIAL PRIMARY KEY,
+            tab_id TEXT,
+            amount NUMERIC DEFAULT 0,
+            timestamp BIGINT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS bad_password_accounts (
             phone TEXT PRIMARY KEY,
             password TEXT,
