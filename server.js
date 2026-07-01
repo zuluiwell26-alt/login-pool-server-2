@@ -600,8 +600,8 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                     '</div><div class="anum">' + (ri + 1) + '</div></div>';
             }).join('');
             var saveBtn = full ? '<div style="display:flex;gap:6px;padding:10px 12px;background:#0d1117;">' +
-                '<button onclick="saveBox(' + bi + ',\'both\')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs &amp; Numbers</button>' +
-                '<button onclick="saveBox(' + bi + ',\'id\')" style="flex:1;background:#2563eb;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs Only</button>' +
+                '<button onclick="saveBox(' + bi + ',\\'both\\')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs &amp; Numbers</button>' +
+                '<button onclick="saveBox(' + bi + ',\\'id\\')" style="flex:1;background:#2563eb;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs Only</button>' +
                 '</div>' : '';
             return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
                 '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
