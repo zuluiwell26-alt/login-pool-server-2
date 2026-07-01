@@ -545,20 +545,15 @@ app.get('/', async (req, res) => {
             else{showMsg(d.error,false);}
         });
     }
-    setInterval(update,1000);setInterval(refreshStats,1000);update();refreshStats();
-
     // ── ALERTS PANEL ─────────────────────────────────────────────
     const BOX_SIZE = 30;
     let _alertBoxes = [];
 
     function parseAlertId(tabId) {
-        // Try format: "ID: 63163 (+260978012009)"
         let match = tabId.match(/ID:\s*(\S+)\s*\(([^)]+)\)/);
         if (match) return { id: match[1], phone: match[2].replace(/^\+260/, '') };
-        // Try format: "ID: 63163 +260978012009" (no parentheses)
         match = tabId.match(/ID:\s*(\S+)\s+(\S+)/);
         if (match) return { id: match[1], phone: match[2].replace(/^\+260/, '') };
-        // Fallback: strip "ID: " prefix and show rest as id
         const stripped = tabId.replace(/^ID:\s*/, '').trim();
         return { id: stripped, phone: '' };
     }
@@ -611,7 +606,6 @@ app.get('/', async (req, res) => {
         document.getElementById('alerts-panel').style.display = 'none';
         document.getElementById('alerts-reveal-btn').style.display = 'flex';
     }
-
     function clearAlerts() {
         const pin = prompt('Enter PIN to clear alerts:');
         if (pin === null) return;
@@ -621,6 +615,8 @@ app.get('/', async (req, res) => {
             .catch(() => alert('Error clearing alerts.'));
         } else { alert('❌ Wrong PIN'); }
     }
+
+    setInterval(update,1000);setInterval(refreshStats,1000);update();refreshStats();
 </script>
 </body>
 </html>`);
