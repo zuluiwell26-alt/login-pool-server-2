@@ -468,6 +468,19 @@ app.get('/', async (req, res) => {
         </div>
         <div class="msg" id="add-msg"></div>
     </div>
+
+    <!-- LOW BALANCE ID BOX PANEL -->
+    <div style="margin-top:20px;">
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+            <button id="alerts-reveal-btn" onclick="showAlerts()" style="flex:1;background:#1e293b;color:#fff;border:none;padding:14px 16px;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">👁️ View IDs &amp; Numbers</button>
+            <button onclick="clearAlerts()" style="background:#ef4444;color:#fff;border:none;padding:14px 20px;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;">🔄 Deposit / Clear</button>
+        </div>
+        <div id="alerts-panel" style="display:none;">
+            <button onclick="hideAlerts()" style="width:100%;background:#0f172a;color:#fff;border:none;padding:12px 16px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:14px;">🔒 Hide IDs &amp; Numbers</button>
+            <div id="alerts-container"><div style="padding:20px;text-align:center;color:#4b5563;font-size:13px;">No low balance accounts yet...</div></div>
+        </div>
+    </div>
+
     <div class="footer">
         <span class="tick" id="tick">--:--:-- CAT</span>
         <span class="hint">Live data · Postgres · Zambia Time</span>
@@ -532,6 +545,75 @@ app.get('/', async (req, res) => {
         });
     }
     setInterval(update,1000);setInterval(refreshStats,1000);update();refreshStats();
+
+    // ── ALERTS PANEL ─────────────────────────────────────────────
+    const BOX_SIZE = 30;
+    let _alertBoxes = [];
+
+    function parseAlertId(tabId) {
+        const match = tabId.match(/ID:\s*(\S+)\s*\(([^)]+)\)/);
+        if (match) return { id: match[1], phone: match[2] };
+        return { id: tabId, phone: '—' };
+    }
+
+    function renderAlerts(alerts) {
+        const container = document.getElementById('alerts-container');
+        if (!container) return;
+        const unique = []; const seen = new Set();
+        alerts.forEach(a => { if (!seen.has(a.tabId)) { seen.add(a.tabId); unique.push(a); } });
+        if (unique.length === 0) {
+            container.innerHTML = '<div style="padding:20px;text-align:center;color:#4b5563;font-size:13px;">No low balance accounts yet...</div>';
+            _alertBoxes = []; return;
+        }
+        const boxes = [];
+        for (let i = 0; i < unique.length; i += BOX_SIZE) boxes.push(unique.slice(i, i + BOX_SIZE));
+        _alertBoxes = boxes;
+        container.innerHTML = boxes.map((box, bi) => {
+            const isFull = box.length >= BOX_SIZE;
+            const rows = box.map((a, ri) => {
+                const p = parseAlertId(a.tabId);
+                return '<div style="display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid #1a1a2e;gap:10px;">' +
+                    '<div style="flex:1;display:flex;gap:10px;">' +
+                    '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:800;color:#e6edf3;">' + p.id + '</div>' +
+                    '<div style="background:#0d1117;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;color:#e6edf3;font-family:monospace;">' + p.phone + '</div>' +
+                    '</div><div style="font-size:12px;font-weight:800;color:#4b5563;min-width:24px;text-align:right;">' + (ri + 1) + '</div></div>';
+            }).join('');
+            return '<div style="margin-bottom:16px;">' +
+                '<div style="background:#0d1117;border-radius:14px 14px 0 0;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">' +
+                '<div style="font-size:12px;font-weight:800;color:#f1f5f9;letter-spacing:2px;">⚠️ BOX ' + (bi + 1) + '</div>' +
+                '<div style="font-size:11px;font-weight:700;background:' + (isFull ? '#ef4444' : '#1e293b') + ';color:' + (isFull ? '#fff' : '#94a3b8') + ';padding:4px 10px;border-radius:20px;">' + box.length + ' / ' + BOX_SIZE + (isFull ? ' • FULL' : '') + '</div>' +
+                '</div><div style="background:#161b22;border-radius:0 0 14px 14px;overflow:hidden;">' + rows + '</div></div>';
+        }).join('');
+    }
+
+    async function pollAlerts() {
+        try {
+            const res = await fetch('/alerts');
+            const data = await res.json();
+            renderAlerts(data);
+        } catch(e) {}
+        setTimeout(pollAlerts, 5000);
+    }
+
+    function showAlerts() {
+        document.getElementById('alerts-reveal-btn').style.display = 'none';
+        document.getElementById('alerts-panel').style.display = 'block';
+        pollAlerts();
+    }
+    function hideAlerts() {
+        document.getElementById('alerts-panel').style.display = 'none';
+        document.getElementById('alerts-reveal-btn').style.display = 'flex';
+    }
+
+    function clearAlerts() {
+        const pin = prompt('Enter PIN to clear alerts:');
+        if (pin === null) return;
+        if (pin === '1234') {
+            fetch('/clear-alerts', { method: 'POST' })
+            .then(() => { renderAlerts([]); alert('Alerts cleared!'); })
+            .catch(() => alert('Error clearing alerts.'));
+        } else { alert('❌ Wrong PIN'); }
+    }
 </script>
 </body>
 </html>`);
@@ -1027,6 +1109,50 @@ app.get('/seed-all-accounts', async (req, res) => {
         res.json({ success: false, error: e.message });
     }
 });
+// Stores a low-balance ID alert from the balance monitor Tampermonkey script
+app.post('/cashout', async (req, res) => {
+    try {
+        const { tabId, amount, timestamp } = req.body;
+        if (!tabId || !tabId.startsWith('ID:')) return res.json({ ok: false, error: 'Invalid tabId' });
+        await pool.query(
+            `INSERT INTO alerts (tab_id, amount, timestamp) VALUES ($1, $2, $3)`,
+            [tabId, amount || 0, timestamp || Date.now()]
+        );
+        console.log(`[ALERT] Low balance ID recorded: ${tabId}`);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('cashout error:', e);
+        res.status(500).json({ ok: false });
+    }
+});
+
+// Clears all stored ID alert records (called by "Deposit / Clear" button)
+app.post('/clear-alerts', async (req, res) => {
+    try {
+        await pool.query(`DELETE FROM alerts`);
+        console.log('Alerts cleared.');
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('clear-alerts error:', e);
+        res.status(500).json({ ok: false });
+    }
+});
+
+// Returns all stored ID alert records for the dashboard panel
+app.get('/alerts', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`SELECT * FROM alerts ORDER BY id ASC`);
+        res.json(rows.map(r => ({
+            tabId: r.tab_id,
+            amount: parseFloat(r.amount),
+            timestamp: parseInt(r.timestamp)
+        })));
+    } catch (e) {
+        console.error('alerts error:', e);
+        res.status(500).json([]);
+    }
+});
+
 app.post('/reset', async (req, res) => {
     await resetAllAccounts();
     poolLocked = false; poolLockedReason = '';
