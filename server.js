@@ -624,33 +624,41 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
     }
     function saveBox(bi) {
-        var box = _boxes[bi];
-        if (!box) return;
-        var noteTitle = document.getElementById('note-title');
-        var noteDate = document.getElementById('note-date');
-        var noteRows = document.getElementById('note-rows');
-        noteTitle.textContent = 'BOX ' + (bi + 1) + ' — IDs & Numbers (' + box.length + '/30 FULL)';
-        noteDate.textContent = new Date().toLocaleString('en-GB');
-        noteRows.innerHTML = box.map(function(a, ri) {
-            var p = parseIdForPrint(a.tabId);
-            return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span><span class="note-sep">|</span><span class="note-phone">' + p.phone + '</span></div>';
-        }).join('');
-        var el = document.getElementById('note-printable');
-        html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }).then(function(canvas) {
-            canvas.toBlob(function(blob) {
-                if (!blob) { alert('Could not generate image.'); return; }
-                var url = URL.createObjectURL(blob);
-                var link = document.createElement('a');
-                link.download = 'box-' + (bi+1) + '-ids.png';
-                link.href = url;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-            }, 'image/png');
-        }).catch(function(err) {
-            alert('Failed to save image: ' + err.message);
-        });
+        try {
+            if (typeof html2canvas === 'undefined') {
+                alert('Save failed: image library did not load. Check your internet connection and reload the page.');
+                return;
+            }
+            var box = _boxes[bi];
+            if (!box) return;
+            var noteTitle = document.getElementById('note-title');
+            var noteDate = document.getElementById('note-date');
+            var noteRows = document.getElementById('note-rows');
+            noteTitle.textContent = 'BOX ' + (bi + 1) + ' — IDs & Numbers (' + box.length + '/30 FULL)';
+            noteDate.textContent = new Date().toLocaleString('en-GB');
+            noteRows.innerHTML = box.map(function(a, ri) {
+                var p = parseIdForPrint(a.tabId);
+                return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span><span class="note-sep">|</span><span class="note-phone">' + p.phone + '</span></div>';
+            }).join('');
+            var el = document.getElementById('note-printable');
+            html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }).then(function(canvas) {
+                canvas.toBlob(function(blob) {
+                    if (!blob) { alert('Could not generate image blob.'); return; }
+                    var url = URL.createObjectURL(blob);
+                    var link = document.createElement('a');
+                    link.download = 'box-' + (bi+1) + '-ids.png';
+                    link.href = url;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+                }, 'image/png');
+            }).catch(function(err) {
+                alert('html2canvas failed: ' + err.message);
+            });
+        } catch (err) {
+            alert('Save failed: ' + (err && err.message ? err.message : err));
+        }
     }
 
     document.getElementById('view-btn').addEventListener('click', function() {
