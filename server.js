@@ -600,8 +600,7 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                     '</div><div class="anum">' + (ri + 1) + '</div></div>';
             }).join('');
             var saveBtn = full ? '<div style="display:flex;gap:8px;padding:10px 12px;background:#0d1117;">' +
-                '<button onclick="saveBox(' + bi + ',\'ids\')" style="flex:1;background:#0ea5e9;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; Save IDs Only</button>' +
-                '<button onclick="saveBox(' + bi + ',\'both\')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; Save IDs &amp; Numbers</button>' +
+                '<button onclick="saveBox(' + bi + ')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; Save IDs &amp; Numbers</button>' +
                 '</div>' : '';
             return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
                 '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
@@ -624,7 +623,7 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
         if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
         return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
     }
-    function saveBox(bi, mode) {
+    function saveBox(bi) {
         try {
             if (typeof html2canvas === 'undefined') {
                 alert('Save failed: image library did not load. Check your internet connection and reload the page.');
@@ -632,18 +631,13 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
             }
             var box = _boxes[bi];
             if (!box) return;
-            mode = mode || 'both';
             var noteTitle = document.getElementById('note-title');
             var noteDate = document.getElementById('note-date');
             var noteRows = document.getElementById('note-rows');
-            var titleSuffix = mode === 'ids' ? 'IDs' : 'IDs & Numbers';
-            noteTitle.textContent = 'BOX ' + (bi + 1) + ' — ' + titleSuffix + ' (' + box.length + '/30 FULL)';
+            noteTitle.textContent = 'BOX ' + (bi + 1) + ' — IDs & Numbers (' + box.length + '/30 FULL)';
             noteDate.textContent = new Date().toLocaleString('en-GB');
             noteRows.innerHTML = box.map(function(a, ri) {
                 var p = parseIdForPrint(a.tabId);
-                if (mode === 'ids') {
-                    return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span></div>';
-                }
                 return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span><span class="note-sep">|</span><span class="note-phone">' + p.phone + '</span></div>';
             }).join('');
             var el = document.getElementById('note-printable');
@@ -652,7 +646,7 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                     if (!blob) { alert('Could not generate image blob.'); return; }
                     var url = URL.createObjectURL(blob);
                     var link = document.createElement('a');
-                    link.download = 'box-' + (bi+1) + '-' + mode + '.png';
+                    link.download = 'box-' + (bi+1) + '-ids.png';
                     link.href = url;
                     document.body.appendChild(link);
                     link.click();
