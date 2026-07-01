@@ -481,12 +481,8 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
     // ── Clock ──────────────────────────────────────────────────────
     function pad(n) { return String(n).padStart(2, '0'); }
     function zambiaTime() {
-        try {
-            return new Date().toLocaleTimeString('en-GB', { timeZone: 'Africa/Lusaka', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        } catch(e) {
-            var d = new Date(Date.now() + 2 * 3600000);
-            return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
-        }
+        var d = new Date(Date.now() + 2 * 3600000);
+        return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
     }
     setInterval(function() {
         document.getElementById('tick').textContent = zambiaTime() + ' CAT';
