@@ -599,12 +599,10 @@ body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;ali
                     (p.phone ? '<div class="achip"><div class="achip-ph">' + p.phone + '</div></div>' : '') +
                     '</div><div class="anum">' + (ri + 1) + '</div></div>';
             }).join('');
-            var saveBtn = full ? '<div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:#0d1117;">' +
-                '<button onclick="saveBox(' + bi + ',\'both\')" style="width:100%;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; Save IDs &amp; Numbers</button>' +
-                '<div style="display:flex;gap:6px;">' +
+            var saveBtn = full ? '<div style="display:flex;gap:6px;padding:10px 12px;background:#0d1117;">' +
+                '<button onclick="saveBox(' + bi + ',\'both\')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs &amp; Numbers</button>' +
                 '<button onclick="saveBox(' + bi + ',\'id\')" style="flex:1;background:#2563eb;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs Only</button>' +
-                '<button onclick="saveBox(' + bi + ',\'phone\')" style="flex:1;background:#7c3aed;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; Numbers Only</button>' +
-                '</div></div>' : '';
+                '</div>' : '';
             return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
                 '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
                 '<div class="abox-body">' + rowsHtml + '</div>' + saveBtn + '</div>';
