@@ -6,6 +6,7 @@ const {
     getBadPasswordAccounts, addBadPasswordAccount, removeBadPasswordAccount,
     getZambiaTime, TWENTY_FOUR_HOURS_MS, FREE_ACCOUNT_LOCK_THRESHOLD,
     LOCK_HOUR, LOCK_MINUTE, UNLOCK_HOUR, UNLOCK_MINUTE,
+    LOW_ACCOUNT_LOCK_START_HOUR, LOW_ACCOUNT_LOCK_START_MINUTE,
     REMOVE_PASSWORD, HEARTBEAT_TIMEOUT_MS, TIMEZONE,
 } = require('./accounts');
 
@@ -26,13 +27,20 @@ let poolLockedReason = '';
 function pad(n) { return String(n).padStart(2, '0'); }
 
 function checkLockStatus(hour, minute, freeCount) {
-    const afterLock = hour > LOCK_HOUR || (hour === LOCK_HOUR && minute >= LOCK_MINUTE);
-    const beforeUnlock = hour < UNLOCK_HOUR || (hour === UNLOCK_HOUR && minute < UNLOCK_MINUTE);
-    const isLockedHours = afterLock && beforeUnlock;
-    // Low account lock ONLY applies during working hours (08:00-18:00)
-    // After 18:00, accounts are given out freely even if below 50
-    const isLowAccounts = isLockedHours && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
-    return { shouldLock: isLockedHours || isLowAccounts, isWorkingHours: !isLockedHours, isLowAccounts };
+    const t = hour * 60 + minute;
+
+    // Mandatory time lock: 08:00 -> 18:00
+    const lockStart = LOCK_HOUR * 60 + LOCK_MINUTE;
+    const lockEnd = UNLOCK_HOUR * 60 + UNLOCK_MINUTE;
+    const isTimeLocked = t >= lockStart && t < lockEnd;
+
+    // Low-account lock: 06:00 -> 08:00 only, and only if free count is at/below threshold
+    const lowAccountStart = LOW_ACCOUNT_LOCK_START_HOUR * 60 + LOW_ACCOUNT_LOCK_START_MINUTE;
+    const lowAccountEnd = lockStart; // feeds straight into the time lock at 08:00
+    const isLowAccountWindow = t >= lowAccountStart && t < lowAccountEnd;
+    const isLowAccounts = isLowAccountWindow && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
+
+    return { shouldLock: isTimeLocked || isLowAccounts, isWorkingHours: !isTimeLocked, isLowAccounts };
 }
 
 const IN_USE_TIMEOUT_MS = 5 * 60 * 60 * 1000;
@@ -98,7 +106,7 @@ setInterval(async () => {
         if (shouldLock) {
             if (!poolLocked) {
                 poolLocked = true;
-                poolLockedReason = !isWorkingHours ? 'Locked at 08:00. Unlocks at 18:00.' : `Low accounts (${freeCount}). Locked until 18:00.`;
+                poolLockedReason = isLowAccounts ? `Low accounts (${freeCount}). Locked until 18:00.` : 'Locked at 08:00. Unlocks at 18:00.';
                 console.log('Pool locked:', poolLockedReason);
             }
         } else {
@@ -705,10 +713,10 @@ initDB().then(async function() {
     const { hour, minute } = getZambiaTime();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
-    const { shouldLock, isWorkingHours } = checkLockStatus(hour, minute, freeCount);
+    const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
     if (shouldLock) {
         poolLocked = true;
-        poolLockedReason = !isWorkingHours ? 'Locked at 08:00. Unlocks at 18:00.' : `Low accounts (${freeCount}). Locked until 18:00.`;
+        poolLockedReason = isLowAccounts ? `Low accounts (${freeCount}). Locked until 18:00.` : 'Locked at 08:00. Unlocks at 18:00.';
         console.log('Startup lock:', poolLockedReason);
     }
     app.listen(PORT, () => console.log('Pool Manager active on port ' + PORT + ' — Zambia Time (Africa/Lusaka)'));
