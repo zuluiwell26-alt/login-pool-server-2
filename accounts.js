@@ -1,618 +1,726 @@
-const { Pool } = require('pg');
+const express = require('express');
+const {
+    pool, initDB, getAccounts, getAccountByTabId,
+    claimFreeAccount, reLoginForTab, updateAccount,
+    addAccount, removeAccount, resetAllAccounts,
+    getBadPasswordAccounts, addBadPasswordAccount, removeBadPasswordAccount,
+    getZambiaTime, TWENTY_FOUR_HOURS_MS, FREE_ACCOUNT_LOCK_THRESHOLD,
+    LOCK_HOUR, LOCK_MINUTE, UNLOCK_HOUR, UNLOCK_MINUTE,
+    LOW_ACCOUNT_LOCK_START_HOUR, LOW_ACCOUNT_LOCK_START_MINUTE,
+    REMOVE_PASSWORD, HEARTBEAT_TIMEOUT_MS, TIMEZONE,
+} = require('./accounts');
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.use(express.json());
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    if (req.method === "OPTIONS") return res.sendStatus(200);
+    next();
 });
 
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-const FREE_ACCOUNT_LOCK_THRESHOLD = 50;
-const LOCK_HOUR = 8;
-const LOCK_MINUTE = 0;
-const UNLOCK_HOUR = 18;
-const UNLOCK_MINUTE = 0;
-const REMOVE_PASSWORD = '1234';
-const HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
-const TIMEZONE = 'Africa/Lusaka';
+let poolLocked = false;
+let poolLockedReason = '';
 
-async function initDB() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS accounts (
-            phone TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            status TEXT DEFAULT 'FREE',
-            logout_time BIGINT DEFAULT NULL,
-            logout_time_str TEXT DEFAULT NULL,
-            last_heartbeat BIGINT DEFAULT NULL,
-            in_use_since BIGINT DEFAULT NULL,
-            tab_id TEXT DEFAULT NULL,
-            freed_at BIGINT DEFAULT NULL
-        );
-    `);
-    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS in_use_since BIGINT DEFAULT NULL;`);
-    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tab_id TEXT DEFAULT NULL;`);
-    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS freed_at BIGINT DEFAULT NULL;`);
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS alerts (
-            id SERIAL PRIMARY KEY,
-            tab_id TEXT,
-            amount NUMERIC DEFAULT 0,
-            timestamp BIGINT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-    `);
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS bad_password_accounts (
-            phone TEXT PRIMARY KEY,
-            password TEXT,
-            reported_at TEXT,
-            status TEXT DEFAULT 'BAD_PASSWORD'
-        );
-    `);
+function pad(n) { return String(n).padStart(2, '0'); }
 
-    const { rowCount } = await pool.query('SELECT 1 FROM accounts LIMIT 1');
-    if (rowCount === 0) {
-        const phoneList = [
-            ["571229027","12345QAZ"],
-            ["571233431","12345QAZ"],
-            ["573191021","12345QAZ"],
-            ["573218113","12345QAZ"],
-            ["573435628","12345QAZ"],
-            ["573822910","12345QAZ"],
-            ["573876935","12345QAZ"],
-            ["573912516","12345QAZ"],
-            ["574030959","12345QAZ"],
-            ["574030962","12345QAZ"],
-            ["574030964","12345QAZ"],
-            ["574030966","12345QAZ"],
-            ["574030975","12345QAZ"],
-            ["574129008","12345QAZ"],
-            ["574167639","12345QAZ"],
-            ["574167651","12345QAZ"],
-            ["574203310","12345QAZ"],
-            ["574203315","12345QAZ"],
-            ["574203325","12345QAZ"],
-            ["574203347","12345QAZ"],
-            ["574203374","12345QAZ"],
-            ["574203379","12345QAZ"],
-            ["574219997","12345QAZ"],
-            ["574238249","12345QAZ"],
-            ["574238252","12345QAZ"],
-            ["574252009","12345QAZ"],
-            ["574252018","12345QAZ"],
-            ["574252022","12345QAZ"],
-            ["574252023","12345QAZ"],
-            ["574283166","12345QAZ"],
-            ["574522519","12345QAZ"],
-            ["574555615","12345QAZ"],
-            ["574555616","12345QAZ"],
-            ["574555617","12345QAZ"],
-            ["574555618","12345QAZ"],
-            ["574555619","12345QAZ"],
-            ["574555620","12345QAZ"],
-            ["574555621","12345QAZ"],
-            ["574555647","12345QAZ"],
-            ["574555712","12345QAZ"],
-            ["574557521","12345QAZ"],
-            ["574557524","12345QAZ"],
-            ["574573250","12345QAZ"],
-            ["574573259","12345QAZ"],
-            ["574573335","12345QAZ"],
-            ["574601571","12345QAZ"],
-            ["574601572","12345QAZ"],
-            ["574601573","12345QAZ"],
-            ["574604364","12345QAZ"],
-            ["574604365","12345QAZ"],
-            ["574604366","12345QAZ"],
-            ["574604368","12345QAZ"],
-            ["574604369","12345QAZ"],
-            ["574604370","12345QAZ"],
-            ["574604382","12345QAZ"],
-            ["574604385","12345QAZ"],
-            ["574609954","12345QAZ"],
-            ["574623473","12345QAZ"],
-            ["574625371","12345QAZ"],
-            ["574638140","12345QAZ"],
-            ["574638161","12345QAZ"],
-            ["574638201","12345QAZ"],
-            ["574638227","12345QAZ"],
-            ["574641539","12345QAZ"],
-            ["574641540","12345QAZ"],
-            ["574939832","12345QAZ"],
-            ["574939833","12345QAZ"],
-            ["574939912","12345QAZ"],
-            ["574939916","12345QAZ"],
-            ["574939961","12345QAZ"],
-            ["574939963","12345QAZ"],
-            ["574960428","12345QAZ"],
-            ["574976586","12345QAZ"],
-            ["574976674","12345QAZ"],
-            ["574976675","12345QAZ"],
-            ["574976858","12345QAZ"],
-            ["574987425","12345QAZ"],
-            ["574987426","12345QAZ"],
-            ["574987504","12345QAZ"],
-            ["574987533","12345QAZ"],
-            ["574987761","12345QAZ"],
-            ["574987764","12345QAZ"],
-            ["574987768","12345QAZ"],
-            ["574987770","12345QAZ"],
-            ["760005186","12345QAZ"],
-            ["760005417","12345QAZ"],
-            ["760005574","12345QAZ"],
-            ["760006202","12345QAZ"],
-            ["760006384","12345QAZ"],
-            ["760006873","12345QAZ"],
-            ["760006979","12345QAZ"],
-            ["760006984","12345QAZ"],
-            ["760011793","12345QAZ"],
-            ["760018356","12345QAZ"],
-            ["760018443","12345QAZ"],
-            ["760018595","12345QAZ"],
-            ["760019189","12345QAZ"],
-            ["760019219","12345QAZ"],
-            ["760019591","12345QAZ"],
-            ["760019593","12345QAZ"],
-            ["760019654","12345QAZ"],
-            ["760019659","12345QAZ"],
-            ["760019672","12345QAZ"],
-            ["760019724","12345QAZ"],
-            ["760020756","12345QAZ"],
-            ["760020761","12345QAZ"],
-            ["760020788","12345QAZ"],
-            ["760020814","12345QAZ"],
-            ["760021086","12345QAZ"],
-            ["760021261","12345QAZ"],
-            ["760021383","12345QAZ"],
-            ["760027905","12345QAZ"],
-            ["760037246","12345QAZ"],
-            ["760037688","12345QAZ"],
-            ["760037719","12345QAZ"],
-            ["760037797","12345QAZ"],
-            ["760037866","12345QAZ"],
-            ["760037870","12345QAZ"],
-            ["760037894","12345QAZ"],
-            ["760090381","12345QAZ"],
-            ["760147665","12345QAZ"],
-            ["760227578","12345QAZ"],
-            ["760247262","12345QAZ"],
-            ["760583293","12345QAZ"],
-            ["760657413","12345QAZ"],
-            ["760657444","12345QAZ"],
-            ["760657485","12345QAZ"],
-            ["760659322","12345QAZ"],
-            ["760659465","12345QAZ"],
-            ["760659523","12345QAZ"],
-            ["760659538","12345QAZ"],
-            ["760659551","12345QAZ"],
-            ["760660688","12345QAZ"],
-            ["760661063","12345QAZ"],
-            ["760661194","12345QAZ"],
-            ["760661938","12345QAZ"],
-            ["760661967","12345QAZ"],
-            ["760661980","12345QAZ"],
-            ["760661985","12345QAZ"],
-            ["760662019","12345QAZ"],
-            ["760662341","12345QAZ"],
-            ["760663289","12345QAZ"],
-            ["760663789","12345QAZ"],
-            ["760663865","12345QAZ"],
-            ["760663943","12345QAZ"],
-            ["760664025","12345QAZ"],
-            ["760664195","12345QAZ"],
-            ["760664794","12345QAZ"],
-            ["760664826","12345QAZ"],
-            ["760664839","12345QAZ"],
-            ["760665432","12345QAZ"],
-            ["760665836","12345QAZ"],
-            ["760665870","12345QAZ"],
-            ["760665895","12345QAZ"],
-            ["760666109","12345QAZ"],
-            ["760667647","12345QAZ"],
-            ["760667659","12345QAZ"],
-            ["760755695","12345QAZ"],
-            ["760782061","12345QAZ"],
-            ["760891376","12345QAZ"],
-            ["760933213","12345QAZ"],
-            ["760956348","12345QAZ"],
-            ["761359385","12345QAZ"],
-            ["761388412","12345QAZ"],
-            ["761409130","12345QAZ"],
-            ["761518509","12345QAZ"],
-            ["761885193","12345QAZ"],
-            ["761910389","12345QAZ"],
-            ["762078529","12345QAZ"],
-            ["762088489","12345QAZ"],
-            ["762166792","12345QAZ"],
-            ["762574897","12345QAZ"],
-            ["762791005","12345QAZ"],
-            ["762916225","12345QAZ"],
-            ["762917321","12345QAZ"],
-            ["763023299","12345QAZ"],
-            ["763568073","12345QAZ"],
-            ["763587210","12345QAZ"],
-            ["763694621","12345QAZ"],
-            ["763779153","12345QAZ"],
-            ["763780710","12345QAZ"],
-            ["763891249","12345QAZ"],
-            ["763937843","12345QAZ"],
-            ["763953726","12345QAZ"],
-            ["764120868","12345QAZ"],
-            ["764164912","12345QAZ"],
-            ["764616688","12345QAZ"],
-            ["764647217","12345QAZ"],
-            ["764861091","12345QAZ"],
-            ["764889476","12345QAZ"],
-            ["764894316","12345QAZ"],
-            ["764939812","12345QAZ"],
-            ["764956251","12345QAZ"],
-            ["764964762","12345QAZ"],
-            ["764970746","12345QAZ"],
-            ["765423136","12345QAZ"],
-            ["765423849","12345QAZ"],
-            ["766254182","12345QAZ"],
-            ["766254841","12345QAZ"],
-            ["766330133","12345QAZ"],
-            ["766413159","12345QAZ"],
-            ["766447125","12345QAZ"],
-            ["766447339","12345QAZ"],
-            ["766663001","12345QAZ"],
-            ["767322451","12345QAZ"],
-            ["767396659","12345QAZ"],
-            ["767595312","12345QAZ"],
-            ["768136503","12345QAZ"],
-            ["768404417","12345QAZ"],
-            ["768454129","12345QAZ"],
-            ["768488312","12345QAZ"],
-            ["768529129","12345QAZ"],
-            ["768553584","12345QAZ"],
-            ["768665792","12345QAZ"],
-            ["768863243","12345QAZ"],
-            ["768871987","12345QAZ"],
-            ["769339547","12345QAZ"],
-            ["769341931","12345QAZ"],
-            ["769385258","12345QAZ"],
-            ["769662639","12345QAZ"],
-            ["769662803","12345QAZ"],
-            ["769686705","12345QAZ"],
-            ["771160063","12345QAZ"],
-            ["771955649","12345QAZ"],
-            ["773189278","12345QAZ"],
-            ["778004375","12345QAZ"],
-            ["778160786","12345QAZ"],
-            ["778301084","12345QAZ"],
-            ["779168053","12345QAZ"],
-            ["797748534","12345QAZ"],
-            ["960020828","12345QAZ"],
-            ["960193284","12345QAZ"],
-            ["960375622","12345QAZ"],
-            ["960591660","12345QAZ"],
-            ["960597218","12345QAZ"],
-            ["960660484","12345QAZ"],
-            ["960700340","12345QAZ"],
-            ["960716610","12345QAZ"],
-            ["960731698","12345QAZ"],
-            ["960972806","12345QAZ"],
-            ["960988569","12345QAZ"],
-            ["961034483","12345QAZ"],
-            ["961372854","12345QAZ"],
-            ["961383265","12345QAZ"],
-            ["961764617","12345QAZ"],
-            ["961991985","12345QAZ"],
-            ["962016579","12345QAZ"],
-            ["962055080","12345QAZ"],
-            ["962111939","12345QAZ"],
-            ["962161072","12345QAZ"],
-            ["962235914","12345QAZ"],
-            ["962244843","12345QAZ"],
-            ["962318925","12345QAZ"],
-            ["962364393","12345QAZ"],
-            ["962375823","12345QAZ"],
-            ["962631331","12345QAZ"],
-            ["962726590","12345QAZ"],
-            ["962745448","12345QAZ"],
-            ["962948516","12345QAZ"],
-            ["962950253","12345QAZ"],
-            ["962961844","12345QAZ"],
-            ["963060339","12345QAZ"],
-            ["963128044","12345QAZ"],
-            ["963251380","12345QAZ"],
-            ["963436308","12345QAZ"],
-            ["963533297","12345QAZ"],
-            ["963829652","12345QAZ"],
-            ["963834140","12345QAZ"],
-            ["963912256","12345QAZ"],
-            ["963935918","12345QAZ"],
-            ["963966578","12345QAZ"],
-            ["963987862","12345QAZ"],
-            ["964049301","12345QAZ"],
-            ["964053903","12345QAZ"],
-            ["964132474","12345QAZ"],
-            ["964236202","12345QAZ"],
-            ["964261215","12345QAZ"],
-            ["964284022","12345QAZ"],
-            ["964309212","12345QAZ"],
-            ["964445696","12345QAZ"],
-            ["964548589","12345QAZ"],
-            ["964618834","12345QAZ"],
-            ["964708601","12345QAZ"],
-            ["964807585","12345QAZ"],
-            ["965038856","12345QAZ"],
-            ["965047269","12345QAZ"],
-            ["965057534","12345QAZ"],
-            ["965147328","12345QAZ"],
-            ["965205922","12345QAZ"],
-            ["965207347","12345QAZ"],
-            ["965214710","12345QAZ"],
-            ["965283630","12345QAZ"],
-            ["965311647","12345QAZ"],
-            ["965471815","12345QAZ"],
-            ["965564865","12345QAZ"],
-            ["965579054","12345QAZ"],
-            ["965580916","12345QAZ"],
-            ["965604772","12345QAZ"],
-            ["965764761","12345QAZ"],
-            ["965778603","12345QAZ"],
-            ["965920178","12345QAZ"],
-            ["965951517","12345QAZ"],
-            ["966175242","12345QAZ"],
-            ["966198792","12345QAZ"],
-            ["966254536","12345QAZ"],
-            ["966259941","12345QAZ"],
-            ["966293099","12345QAZ"],
-            ["966390327","12345QAZ"],
-            ["966468427","12345QAZ"],
-            ["966877147","12345QAZ"],
-            ["966925797","12345QAZ"],
-            ["967048567","12345QAZ"],
-            ["967049603","12345QAZ"],
-            ["967062046","12345QAZ"],
-            ["967510378","12345QAZ"],
-            ["967558578","12345QAZ"],
-            ["967558582","12345QAZ"],
-            ["967558654","12345QAZ"],
-            ["967625186","12345QAZ"],
-            ["967784998","12345QAZ"],
-            ["967928877","12345QAZ"],
-            ["967941470","12345QAZ"],
-            ["967989484","12345QAZ"],
-            ["968154162","12345QAZ"],
-            ["968154435","12345QAZ"],
-            ["968154474","12345QAZ"],
-            ["968154974","12345QAZ"],
-            ["968155185","12345QAZ"],
-            ["968318486","12345QAZ"],
-            ["968346879","12345QAZ"],
-            ["968391108","12345QAZ"],
-            ["968542617","12345QAZ"],
-            ["968610588","12345QAZ"],
-            ["968617020","12345QAZ"],
-            ["968617422","12345QAZ"],
-            ["968625930","12345QAZ"],
-            ["968651969","12345QAZ"],
-            ["968724129","12345QAZ"],
-            ["968724386","12345QAZ"],
-            ["968760277","12345QAZ"],
-            ["968760381","12345QAZ"],
-            ["968760637","12345QAZ"],
-            ["968760741","12345QAZ"],
-            ["968761547","12345QAZ"],
-            ["968761667","12345QAZ"],
-            ["968761768","12345QAZ"],
-            ["968763119","12345QAZ"],
-            ["968763398","12345QAZ"],
-            ["968763426","12345QAZ"],
-            ["968823485","12345QAZ"],
-            ["968873596","12345QAZ"],
-            ["968940559","12345QAZ"],
-            ["969063860","12345QAZ"],
-            ["969139971","12345QAZ"],
-            ["969261812","12345QAZ"],
-            ["969265503","12345QAZ"],
-            ["969265508","12345QAZ"],
-            ["969272897","12345QAZ"],
-            ["969325029","12345QAZ"],
-            ["969374875","12345QAZ"],
-            ["969389371","12345QAZ"],
-            ["969403257","12345QAZ"],
-            ["969451826","12345QAZ"],
-            ["969462871","12345QAZ"],
-            ["969523598","12345QAZ"],
-            ["969530530","12345QAZ"],
-            ["969534706","12345QAZ"],
-            ["969594643","12345QAZ"],
-            ["969734371","12345QAZ"],
-            ["969781048","12345QAZ"],
-            ["969950228","12345QAZ"],
-        ];
-        // Batched single INSERT instead of 371 separate queries — this is
-        // dramatically faster and avoids Railway's health check timing out
-        // while initDB() is still running on startup.
-        const values = [];
-        const placeholders = [];
-        phoneList.forEach(([phone, password], i) => {
-            placeholders.push(`($${i * 2 + 1}, $${i * 2 + 2})`);
-            values.push(phone, password);
-        });
-        await pool.query(
-            `INSERT INTO accounts (phone, password) VALUES ${placeholders.join(', ')} ON CONFLICT DO NOTHING`,
-            values
-        );
-        console.log('Accounts seeded into database.');
-    }
+function checkLockStatus(hour, minute, freeCount) {
+    const t = hour * 60 + minute;
+
+    // Mandatory time lock: 08:00 -> 18:00
+    const lockStart = LOCK_HOUR * 60 + LOCK_MINUTE;
+    const lockEnd = UNLOCK_HOUR * 60 + UNLOCK_MINUTE;
+    const isTimeLocked = t >= lockStart && t < lockEnd;
+
+    // Low-account lock: 06:00 -> 08:00 only, and only if free count is at/below threshold
+    const lowAccountStart = LOW_ACCOUNT_LOCK_START_HOUR * 60 + LOW_ACCOUNT_LOCK_START_MINUTE;
+    const lowAccountEnd = lockStart; // feeds straight into the time lock at 08:00
+    const isLowAccountWindow = t >= lowAccountStart && t < lowAccountEnd;
+    const isLowAccounts = isLowAccountWindow && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
+
+    return { shouldLock: isTimeLocked || isLowAccounts, isWorkingHours: !isTimeLocked, isLowAccounts };
 }
 
-async function getAccounts() {
-    const { rows } = await pool.query('SELECT * FROM accounts ORDER BY phone ASC');
-    return rows.map(r => ({
-        phone: r.phone,
-        password: r.password,
-        status: r.status,
-        logoutTime: r.logout_time ? Number(r.logout_time) : null,
-        logoutTimeStr: r.logout_time_str,
-        lastHeartbeat: r.last_heartbeat ? Number(r.last_heartbeat) : null,
-        inUseSince: r.in_use_since ? Number(r.in_use_since) : null,
-        tabId: r.tab_id || null,
-        freedAt: r.freed_at ? Number(r.freed_at) : null,
-    }));
-}
+const IN_USE_TIMEOUT_MS = 5 * 60 * 60 * 1000;
+const HEARTBEAT_SILENCE_TIMEOUT_MS = 10 * 60 * 60 * 1000;
 
-// Find an IN-USE account currently held by a specific tab ID
-async function getAccountByTabId(tabId) {
-    const { rows } = await pool.query(
-        `SELECT * FROM accounts WHERE tab_id = $1 AND status = 'IN-USE' AND logout_time IS NULL LIMIT 1`,
-        [tabId]
-    );
-    if (rows.length === 0) return null;
-    const r = rows[0];
-    return {
-        phone: r.phone, password: r.password, status: r.status,
-        logoutTime: r.logout_time ? Number(r.logout_time) : null,
-        logoutTimeStr: r.logout_time_str,
-        lastHeartbeat: r.last_heartbeat ? Number(r.last_heartbeat) : null,
-        inUseSince: r.in_use_since ? Number(r.in_use_since) : null,
-        tabId: r.tab_id || null,
-        freedAt: r.freed_at ? Number(r.freed_at) : null,
-    };
-}
-
-// Single-transaction: move old account to Waiting and claim a new one atomically
-async function reLoginForTab(tabId, heartbeatNow, logoutTimeStr) {
-    const client = await pool.connect();
+// Auto-free after 24h
+setInterval(async () => {
     try {
-        await client.query('BEGIN');
-        if (tabId) {
-            const { rows: oldRows } = await client.query(
-                `SELECT phone FROM accounts WHERE tab_id = $1 AND status = 'IN-USE' AND logout_time IS NULL LIMIT 1 FOR UPDATE SKIP LOCKED`,
-                [tabId]
-            );
-            if (oldRows.length > 0) {
-                await client.query(
-                    `UPDATE accounts SET logout_time = $2, logout_time_str = $3, last_heartbeat = NULL, in_use_since = NULL, tab_id = NULL WHERE phone = $1`,
-                    [oldRows[0].phone, heartbeatNow, logoutTimeStr + ' (re-login)']
-                );
+        const accounts = await getAccounts();
+        const now = Date.now();
+        for (const acc of accounts) {
+            if (acc.status === 'IN-USE' && acc.logoutTime && (now - acc.logoutTime >= TWENTY_FOUR_HOURS_MS)) {
+                await updateAccount(acc.phone, { status: 'FREE', logoutTime: null, logoutTimeStr: null, lastHeartbeat: null, inUseSince: null, tabId: null, freedAt: now });
             }
         }
-        const { rows: newRows } = await client.query(
-            `SELECT phone, password FROM accounts WHERE status = 'FREE' ORDER BY freed_at ASC NULLS LAST LIMIT 1 FOR UPDATE SKIP LOCKED`
-        );
-        if (newRows.length === 0) { await client.query('ROLLBACK'); return null; }
-        const { phone, password } = newRows[0];
-        await client.query(
-            `UPDATE accounts SET status = 'IN-USE', logout_time = NULL, logout_time_str = NULL, last_heartbeat = $2, in_use_since = $2, tab_id = $3, freed_at = NULL WHERE phone = $1`,
-            [phone, heartbeatNow, tabId || null]
-        );
-        await client.query('COMMIT');
-        return { phone, password };
-    } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
-    } finally {
-        client.release();
-    }
-}
+    } catch(e) { console.error('auto-free error:', e); }
+}, 60 * 1000);
 
-// ATOMIC CLAIM: picks ONE free account and marks it IN-USE in a single SQL
-// statement. Orders by freed_at ASC NULLS LAST — accounts free longest go first.
-async function claimFreeAccount(heartbeatNow, tabId) {
-    const client = await pool.connect();
+// Heartbeat timeout
+setInterval(async () => {
     try {
-        await client.query('BEGIN');
-        const { rows } = await client.query(`
-            SELECT phone, password FROM accounts
-            WHERE status = 'FREE'
-            ORDER BY freed_at ASC NULLS LAST
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        `);
-        if (rows.length === 0) {
-            await client.query('ROLLBACK');
-            return null;
+        const accounts = await getAccounts();
+        const now = Date.now();
+        for (const acc of accounts) {
+            if (acc.status === 'IN-USE' && !acc.logoutTime && acc.lastHeartbeat) {
+                if (now - acc.lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
+                    const { hour, minute } = getZambiaTime();
+                    await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: pad(hour) + ':' + pad(minute) + ' (tab closed)', inUseSince: null, tabId: null });
+                }
+            }
         }
-        const { phone, password } = rows[0];
-        await client.query(
-            `UPDATE accounts SET status = 'IN-USE', logout_time = NULL, logout_time_str = NULL, last_heartbeat = $2, in_use_since = $2, tab_id = $3, freed_at = NULL WHERE phone = $1`,
-            [phone, heartbeatNow, tabId || null]
-        );
-        await client.query('COMMIT');
-        return { phone, password };
-    } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
-    } finally {
-        client.release();
+    } catch(e) { console.error('heartbeat-check error:', e); }
+}, 10 * 1000);
+
+// 5h in-use and 10h silence timeout
+setInterval(async () => {
+    try {
+        const accounts = await getAccounts();
+        const now = Date.now();
+        for (const acc of accounts) {
+            if (acc.status === 'IN-USE' && !acc.logoutTime) {
+                const { hour, minute } = getZambiaTime();
+                const timeStr = pad(hour) + ':' + pad(minute);
+                if (acc.inUseSince && now - acc.inUseSince > IN_USE_TIMEOUT_MS) {
+                    await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (5h timeout)', inUseSince: null, tabId: null });
+                    continue;
+                }
+                if (acc.lastHeartbeat && now - acc.lastHeartbeat > HEARTBEAT_SILENCE_TIMEOUT_MS) {
+                    await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (10h no heartbeat)', inUseSince: null, tabId: null });
+                }
+            }
+        }
+    } catch(e) { console.error('timeout-check error:', e); }
+}, 60 * 1000);
+
+// Lock check
+setInterval(async () => {
+    try {
+        const { hour, minute } = getZambiaTime();
+        const accounts = await getAccounts();
+        const freeCount = accounts.filter(a => a.status === 'FREE').length;
+        const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
+        if (shouldLock) {
+            if (!poolLocked) {
+                poolLocked = true;
+                poolLockedReason = isLowAccounts ? `Low accounts (${freeCount}). Locked until 18:00.` : 'Locked at 08:00. Unlocks at 18:00.';
+                console.log('Pool locked:', poolLockedReason);
+            }
+        } else {
+            if (poolLocked) { poolLocked = false; poolLockedReason = ''; console.log('Pool unlocked.'); }
+        }
+    } catch(e) { console.error('lock-check error:', e); }
+}, 10 * 1000);
+
+// ── API ENDPOINTS ──────────────────────────────────────────────────────────
+
+app.get('/stats', async (req, res) => {
+    try {
+        const accounts = await getAccounts();
+        const badPasswordAccounts = await getBadPasswordAccounts();
+        res.json({
+            free: accounts.filter(a => a.status === 'FREE').length,
+            inUse: accounts.filter(a => a.status === 'IN-USE' && !a.logoutTime).length,
+            waiting: accounts.filter(a => a.status === 'IN-USE' && a.logoutTime).length,
+            badPassword: badPasswordAccounts.length,
+            locked: poolLocked,
+            reason: poolLockedReason
+        });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/inuse-stats', async (req, res) => {
+    try {
+        const accounts = await getAccounts();
+        const list = accounts
+            .filter(a => a.status === 'IN-USE' && !a.logoutTime)
+            .sort((a, b) => {
+                const aNum = a.tabId ? parseInt(a.tabId.replace('TAB-', '')) : 9999;
+                const bNum = b.tabId ? parseInt(b.tabId.replace('TAB-', '')) : 9999;
+                return aNum - bNum;
+            })
+            .map(a => ({ phone: a.phone, lastHeartbeat: a.lastHeartbeat, tabId: a.tabId }));
+        res.json(list);
+    } catch(e) { res.status(500).json([]); }
+});
+
+app.post('/heartbeat', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        const accounts = await getAccounts();
+        const account = accounts.find(a => a.phone === phone);
+        if (account && account.status === 'IN-USE') {
+            await updateAccount(phone, { lastHeartbeat: Date.now() });
+            return res.json({ success: true });
+        }
+        res.json({ success: false, error: 'Account not found or not in use.' });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/tab-closed', express.text({ type: '*/*' }), async (req, res) => {
+    try {
+        let phone;
+        if (typeof req.body === 'string') { phone = JSON.parse(req.body).phone; }
+        else if (req.body && req.body.phone) { phone = req.body.phone; }
+        if (!phone) return res.json({ success: false });
+        const accounts = await getAccounts();
+        const account = accounts.find(a => a.phone === phone);
+        if (account && account.status === 'IN-USE' && !account.logoutTime) {
+            const { hour, minute } = getZambiaTime();
+            await updateAccount(phone, { logoutTime: Date.now(), logoutTimeStr: pad(hour) + ':' + pad(minute) + ' (tab closed)' });
+        }
+        res.json({ success: true });
+    } catch(e) { res.json({ success: false }); }
+});
+
+app.post('/request-login', async (req, res) => {
+    try {
+        if (poolLocked) return res.json({ success: false, error: `Pool locked. ${poolLockedReason}` });
+        const { tabId } = req.body;
+        if (!tabId) return res.json({ success: false, error: 'Tab ID required.' });
+        const { hour, minute } = getZambiaTime();
+        const claimed = await reLoginForTab(tabId, Date.now(), pad(hour) + ':' + pad(minute));
+        if (claimed) return res.json({ success: true, phone: claimed.phone, password: claimed.password });
+        return res.json({ success: false, error: 'No free accounts available' });
+    } catch(e) { console.error('request-login error:', e); res.json({ success: false, error: 'Server error' }); }
+});
+
+app.post('/logout', async (req, res) => {
+    try {
+        const { phone, logoutTime } = req.body;
+        const accounts = await getAccounts();
+        const account = accounts.find(a => a.phone === phone);
+        if (account) {
+            await updateAccount(phone, { logoutTime: Date.now(), logoutTimeStr: logoutTime, lastHeartbeat: null, inUseSince: null, tabId: null });
+            return res.json({ success: true });
+        }
+        res.json({ success: false, error: 'Account not found.' });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/wrong-password', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) return res.json({ success: false });
+        const { hour, minute } = getZambiaTime();
+        const accounts = await getAccounts();
+        const acc = accounts.find(a => a.phone === phone) || { phone, password: 'unknown' };
+        await removeAccount(phone);
+        await addBadPasswordAccount(acc.phone, acc.password, pad(hour) + ':' + pad(minute));
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/add-account', async (req, res) => {
+    try {
+        const { phone, password } = req.body;
+        if (!phone || !password) return res.json({ success: false, error: 'Phone and password required.' });
+        const accounts = await getAccounts();
+        if (accounts.find(a => a.phone === phone)) return res.json({ success: false, error: 'Account already exists.' });
+        await addAccount(phone, password);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/remove-account', async (req, res) => {
+    try {
+        const { phone, pin } = req.body;
+        if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
+        await removeAccount(phone);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/remove-bad-password', async (req, res) => {
+    try {
+        const { phone, pin } = req.body;
+        if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
+        await removeBadPasswordAccount(phone);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+app.post('/cashout', async (req, res) => {
+    try {
+        const { tabId, amount, timestamp } = req.body;
+        if (!tabId || !tabId.startsWith('ID:')) return res.json({ ok: false, error: 'Invalid tabId' });
+        await pool.query('INSERT INTO alerts (tab_id, amount, timestamp) VALUES ($1, $2, $3)', [tabId, amount || 0, timestamp || Date.now()]);
+        console.log('[ALERT] Recorded:', tabId);
+        res.json({ ok: true });
+    } catch(e) { console.error('cashout error:', e); res.status(500).json({ ok: false }); }
+});
+
+app.post('/clear-alerts', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM alerts');
+        res.json({ ok: true });
+    } catch(e) { res.status(500).json({ ok: false }); }
+});
+
+app.get('/alerts', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM alerts ORDER BY id ASC');
+        res.json(rows.map(r => ({ tabId: r.tab_id, amount: parseFloat(r.amount), timestamp: parseInt(r.timestamp) })));
+    } catch(e) { res.status(500).json([]); }
+});
+
+app.post('/reset', async (req, res) => {
+    try {
+        await resetAllAccounts();
+        poolLocked = false; poolLockedReason = '';
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+// ── VIEW PAGES ─────────────────────────────────────────────────────────────
+
+app.get('/view/free', async (req, res) => {
+    try {
+        const accounts = await getAccounts();
+        const list = accounts.filter(a => a.status === 'FREE')
+            .sort((a, b) => { if (a.freedAt && b.freedAt) return a.freedAt - b.freedAt; if (a.freedAt) return -1; if (b.freedAt) return 1; return 0; });
+        const rows = list.map((r, i) => `<div class="row" data-phone="${r.phone}"><div class="rn">${i+1}.</div><div class="ri"><div class="rp">${r.phone}</div><div class="rs">${r.password}</div></div><button class="rb" onclick="removeAccount('${r.phone}')">Remove</button></div>`).join('') || '<div class="empty">No accounts</div>';
+        res.send(listPage('Free Accounts', list.length + ' ready', rows, true));
+    } catch(e) { res.status(500).send('Error'); }
+});
+
+app.get('/view/inuse', async (req, res) => {
+    try {
+        const accounts = await getAccounts();
+        const list = accounts.filter(a => a.status === 'IN-USE' && !a.logoutTime)
+            .sort((a, b) => { const an = a.tabId ? parseInt(a.tabId.replace('TAB-','')) : 9999; const bn = b.tabId ? parseInt(b.tabId.replace('TAB-','')) : 9999; return an - bn; });
+        const rows = list.map((r, i) => `<div class="row" data-phone="${r.phone}"><div class="rn">${i+1}.</div><div class="ri"><div class="rp">${r.phone}</div><div class="rs" id="hb-${i}">checking...</div></div></div>`).join('') || '<div class="empty">No accounts</div>';
+        res.send(`<!DOCTYPE html><html><head><title>In Use</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;background:#04060a;padding:20px;min-height:100vh}.page{background:#0d1117;border-radius:16px;max-width:520px;margin:0 auto;overflow:hidden}.ph{padding:16px 20px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:12px}.back{background:#161b22;border:1px solid #30363d;color:#8b949e;padding:6px 12px;border-radius:8px;font-size:12px;text-decoration:none}.pt{font-size:15px;font-weight:500;color:#e6edf3}.ps{font-size:11px;color:#4b5563}.sw{padding:14px 20px;border-bottom:1px solid #21262d}.si{width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 14px;border-radius:8px;font-size:13px;outline:none}.row{display:flex;align-items:center;padding:12px 20px;border-bottom:1px solid #161b22;gap:10px}.row:last-child{border-bottom:none}.rn{font-size:12px;color:#4b5563;width:26px}.ri{flex:1}.rp{font-size:14px;color:#e6edf3;font-weight:500}.rs{font-size:11px;margin-top:3px}.alive{color:#3fb950}.warn{color:#fbbf24}.dead{color:#f87171}.empty{padding:40px;text-align:center;color:#4b5563;font-size:13px}.hidden{display:none}</style></head><body><div class="page"><div class="ph"><a href="/" class="back">&#8592; Back</a><div><div class="pt">In Use</div><div class="ps">${list.length} accounts</div></div></div><div class="sw"><input class="si" placeholder="Search..." oninput="filterRows(this.value)"></div><div id="list">${rows}</div></div><script>function filterRows(q){document.querySelectorAll('.row').forEach(r=>{r.classList.toggle('hidden',q!==''&&!r.dataset.phone.includes(q));})}function updateHB(){fetch('/inuse-stats').then(r=>r.json()).then(data=>{data.forEach((a,i)=>{const el=document.getElementById('hb-'+i);if(!el)return;if(!a.lastHeartbeat){el.className='rs warn';el.textContent='Waiting for heartbeat'+(a.tabId?' — '+a.tabId:'');return;}const s=Math.floor((Date.now()-a.lastHeartbeat)/1000);if(s<5){el.className='rs alive';el.textContent='OK — '+s+'s ago'+(a.tabId?' — '+a.tabId:'');}else if(s<30){el.className='rs warn';el.textContent='Slow — '+s+'s ago'+(a.tabId?' — '+a.tabId:'');}else{el.className='rs dead';el.textContent='No heartbeat — '+s+'s ago'+(a.tabId?' — '+a.tabId:'');}});}).catch(()=>{})}setInterval(updateHB,1000);updateHB();</script></body></html>`);
+    } catch(e) { res.status(500).send('Error'); }
+});
+
+app.get('/view/waiting', async (req, res) => {
+    try {
+        const accounts = await getAccounts();
+        const list = accounts.filter(a => a.status === 'IN-USE' && a.logoutTime)
+            .map(a => ({ phone: a.phone, freeAt: a.logoutTime + TWENTY_FOUR_HOURS_MS, logoutTimeStr: a.logoutTimeStr }))
+            .sort((a, b) => a.freeAt - b.freeAt);
+        const freeAtData = JSON.stringify(list.map((r, i) => ({ id: i, freeAt: r.freeAt })));
+        const rows = list.map((r, i) => `<div class="row" data-phone="${r.phone}"><div class="rn">${i+1}.</div><div class="ri"><div class="rp">${r.phone}</div><div class="rs" id="cd-${i}">calculating...</div>${r.logoutTimeStr ? `<div class="rn2">${r.logoutTimeStr}</div>` : ''}</div></div>`).join('') || '<div class="empty">No accounts</div>';
+        res.send(`<!DOCTYPE html><html><head><title>Waiting 24h</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;background:#04060a;padding:20px;min-height:100vh}.page{background:#0d1117;border-radius:16px;max-width:520px;margin:0 auto;overflow:hidden}.ph{padding:16px 20px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:12px}.back{background:#161b22;border:1px solid #30363d;color:#8b949e;padding:6px 12px;border-radius:8px;font-size:12px;text-decoration:none}.pt{font-size:15px;font-weight:500;color:#e6edf3}.ps{font-size:11px;color:#4b5563}.sw{padding:14px 20px;border-bottom:1px solid #21262d}.si{width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 14px;border-radius:8px;font-size:13px;outline:none}.row{display:flex;align-items:center;padding:12px 20px;border-bottom:1px solid #161b22;gap:10px}.row:last-child{border-bottom:none}.rn{font-size:12px;color:#4b5563;width:26px}.rn2{font-size:10px;color:#4b5563;margin-top:2px}.ri{flex:1}.rp{font-size:14px;color:#e6edf3;font-weight:500}.rs{font-size:11px;color:#fbbf24;margin-top:3px}.empty{padding:40px;text-align:center;color:#4b5563;font-size:13px}.hidden{display:none}</style></head><body><div class="page"><div class="ph"><a href="/" class="back">&#8592; Back</a><div><div class="pt">Waiting 24h</div><div class="ps">${list.length} accounts</div></div></div><div class="sw"><input class="si" placeholder="Search..." oninput="filterRows(this.value)"></div><div id="list">${rows}</div></div><script>function pad(n){return String(n).padStart(2,'0')}const data=${freeAtData};function updateCD(){const now=Date.now();data.forEach(item=>{const el=document.getElementById('cd-'+item.id);if(!el)return;const diff=item.freeAt-now;if(diff<=0){el.textContent='Ready';el.style.color='#3fb950';}else{const h=Math.floor(diff/3600000);const m=Math.floor((diff%3600000)/60000);const s=Math.floor((diff%60000)/1000);el.textContent='Free in: '+h+'h '+pad(m)+'m '+pad(s)+'s';}});}function filterRows(q){document.querySelectorAll('.row').forEach(r=>{r.classList.toggle('hidden',q!==''&&!r.dataset.phone.includes(q));})}setInterval(updateCD,1000);updateCD();</script></body></html>`);
+    } catch(e) { res.status(500).send('Error'); }
+});
+
+app.get('/view/bad', async (req, res) => {
+    try {
+        const list = await getBadPasswordAccounts();
+        const rows = list.map((r, i) => `<div class="row" data-phone="${r.phone}"><div class="rn">${i+1}.</div><div class="ri"><div class="rp">${r.phone}</div><div class="rs">${r.password}</div>${r.reportedAt ? `<div class="rt">Reported: ${r.reportedAt}</div>` : ''}</div><button class="rb" onclick="removeAccount('${r.phone}')">Remove</button></div>`).join('') || '<div class="empty">No accounts</div>';
+        res.send(listPage('Bad Password', list.length + ' accounts', rows, true));
+    } catch(e) { res.status(500).send('Error'); }
+});
+
+function listPage(title, subtitle, rows, showRemove) {
+    return `<!DOCTYPE html><html><head><title>${title}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;background:#04060a;padding:20px;min-height:100vh}.page{background:#0d1117;border-radius:16px;max-width:520px;margin:0 auto;overflow:hidden}.ph{padding:16px 20px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:12px}.back{background:#161b22;border:1px solid #30363d;color:#8b949e;padding:6px 12px;border-radius:8px;font-size:12px;text-decoration:none}.pt{font-size:15px;font-weight:500;color:#e6edf3}.ps{font-size:11px;color:#4b5563}.sw{padding:14px 20px;border-bottom:1px solid #21262d}.si{width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 14px;border-radius:8px;font-size:13px;outline:none}.row{display:flex;align-items:center;padding:12px 20px;border-bottom:1px solid #161b22;gap:10px}.row:last-child{border-bottom:none}.rn{font-size:12px;color:#4b5563;width:26px}.ri{flex:1}.rp{font-size:14px;color:#e6edf3;font-weight:500}.rs{font-size:11px;color:#4b5563;margin-top:2px}.rt{font-size:10px;color:#f87171;margin-top:2px}.rb{background:#2d0a0a;border:1px solid #7f1d1d;color:#f87171;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer}.empty{padding:40px;text-align:center;color:#4b5563;font-size:13px}.hidden{display:none}.pm{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}.pb{background:#0d1117;border:1.5px solid #21262d;border-radius:16px;padding:28px 24px;width:100%;max-width:320px;text-align:center}.ptt{font-size:15px;font-weight:500;color:#e6edf3;margin-bottom:6px}.ps2{font-size:12px;color:#4b5563;margin-bottom:20px}.pi{width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:12px;border-radius:8px;font-size:16px;outline:none;text-align:center;letter-spacing:4px;margin-bottom:14px}.pr{display:flex;gap:10px}.pc{flex:1;background:#161b22;border:1px solid #30363d;color:#8b949e;padding:10px;border-radius:8px;font-size:13px;cursor:pointer}.pco{flex:1;background:#7f1d1d;border:none;color:#f87171;padding:10px;border-radius:8px;font-size:13px;cursor:pointer}.pe{color:#f87171;font-size:12px;margin-top:10px;display:none}</style></head><body><div class="page"><div class="ph"><a href="/" class="back">&#8592; Back</a><div><div class="pt">${title}</div><div class="ps">${subtitle}</div></div></div><div class="sw"><input class="si" placeholder="Search..." oninput="filterRows(this.value)"></div><div id="list">${rows}</div></div>${showRemove ? `<div class="pm" id="modal" style="display:none"><div class="pb"><div class="ptt">&#128274; Confirm</div><div class="ps2">Enter password to remove</div><input class="pi" id="pin" type="password" maxlength="10" placeholder="••••"><div class="pr"><button class="pc" onclick="closeModal()">Cancel</button><button class="pco" onclick="confirmRemove()">Remove</button></div><div class="pe" id="perr">Wrong password</div></div></div>` : ''}<script>let pending=null;function removeAccount(p){pending=p;document.getElementById('pin').value='';document.getElementById('perr').style.display='none';document.getElementById('modal').style.display='flex';}function closeModal(){pending=null;document.getElementById('modal').style.display='none';}function confirmRemove(){const pin=document.getElementById('pin').value.trim();fetch('/remove-account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:pending,pin})}).then(r=>r.json()).then(d=>{if(d.success){closeModal();document.querySelector('[data-phone="'+pending+'"]').remove();}else{document.getElementById('perr').style.display='block';}});}document.addEventListener('DOMContentLoaded',()=>{const pi=document.getElementById('pin');if(pi){pi.addEventListener('keydown',e=>{if(e.key==='Enter')confirmRemove();if(e.key==='Escape')closeModal();});}});function filterRows(q){document.querySelectorAll('.row').forEach(r=>{r.classList.toggle('hidden',q!==''&&!r.dataset.phone.includes(q));});}</script></body></html>`;
+}
+
+// ── MAIN DASHBOARD ─────────────────────────────────────────────────────────
+
+app.get('/', async (req, res) => {
+    try {
+        const accounts = await getAccounts();
+        const freeAccounts = accounts.filter(a => a.status === 'FREE');
+        const inUseAccounts = accounts.filter(a => a.status === 'IN-USE' && !a.logoutTime);
+        const waitingAccounts = accounts.filter(a => a.status === 'IN-USE' && a.logoutTime);
+        const badPasswordAccounts = await getBadPasswordAccounts();
+        res.send(`<!DOCTYPE html>
+<html>
+<head>
+<title>Login Pool Manager</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;background:#04060a;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.db{background:#080b10;border-radius:20px;padding:24px;width:100%;max-width:760px}
+.top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.db-title{font-size:18px;font-weight:600;color:#fff}
+.pill{padding:6px 14px;border-radius:20px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pill-live{background:#0d4429;color:#3fb950}
+.pill-locked{background:#4b1111;color:#f87171}
+.dot{width:7px;height:7px;border-radius:50%;animation:blink 1.2s infinite}
+.dot-live{background:#3fb950}
+.dot-locked{background:#f87171}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
+.boxes{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:16px}
+.box{border-radius:14px;padding:16px 14px;display:flex;flex-direction:column}
+.box-free{background:#0a1a0f;border:1.5px solid #1a4a27}
+.box-inuse{background:#080f1f;border:1.5px solid #1a2f55}
+.box-waiting{background:#120c22;border:1.5px solid #2e1f55}
+.box-bad{background:#1a0f0a;border:1.5px solid #4a1f0a}
+.box-free.locked-box{background:#1a0a0a;border-color:#7f1d1d}
+.bl{font-size:9px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.c-free{color:#3fb950}.c-inuse{color:#58a6ff}.c-waiting{color:#c4b5fd}.c-bad{color:#fb923c}.c-locked{color:#f87171}
+.bn{font-size:48px;font-weight:500;line-height:1;letter-spacing:-2px;margin-bottom:6px}
+.bd{font-size:11px;margin-bottom:12px;flex:1}
+.d-free{color:#2a6e3a}.d-inuse{color:#1e4a7a}.d-waiting{color:#4a3080}.d-bad{color:#7a3a10}.d-locked{color:#7f2020}
+.unlock-t{font-size:14px;font-weight:500;color:#fff;margin-bottom:2px}
+.unlock-s{font-size:9px;color:#7f2020;margin-bottom:10px}
+.vbtn{width:100%;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px;border:none;background:#92400e;color:#fed7aa;text-decoration:none}
+.vcnt{background:#fed7aa;color:#92400e;border-radius:20px;padding:1px 7px;font-size:10px;font-weight:700}
+.add-box{background:#0d1117;border:1.5px solid #21262d;border-radius:12px;padding:18px 20px;margin-bottom:16px}
+.add-title{font-size:12px;font-weight:600;color:#8b949e;margin-bottom:12px;letter-spacing:0.5px;text-transform:uppercase}
+.add-row{display:flex;gap:8px;flex-wrap:wrap}
+.add-input{flex:1;min-width:110px;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 12px;border-radius:8px;font-size:13px;outline:none}
+.add-input::placeholder{color:#4b5563}
+.add-btn{background:#1a3a6e;border:none;color:#a8d0ff;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer}
+.msg{font-size:12px;margin-top:8px;padding:7px 10px;border-radius:6px;display:none}
+.msg-ok{background:#0d4429;color:#3fb950}.msg-err{background:#4b1111;color:#f87171}
+.alerts-area{margin-bottom:16px}
+.abtn-row{display:flex;gap:10px;margin-bottom:10px}
+.abtn{flex:1;background:#1e293b;color:#fff;border:none;padding:14px 16px;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer}
+.abtn-clear{background:#ef4444;color:#fff;border:none;padding:14px 18px;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer}
+.apanel{display:none}
+.ahide{width:100%;background:#0f172a;color:#fff;border:none;padding:12px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:12px}
+.abox{margin-bottom:14px}
+.abox-header{background:#0d1117;border-radius:12px 12px 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center}
+.abox-title{font-size:11px;font-weight:800;color:#f1f5f9;letter-spacing:2px}
+.abox-count{font-size:10px;font-weight:700;background:#1e293b;color:#94a3b8;padding:3px 8px;border-radius:20px}
+.abox-count.full{background:#ef4444;color:#fff}
+.abox-body{background:#161b22;border-radius:0 0 12px 12px;overflow:hidden}
+.arow{display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #1a1a2e;gap:8px}
+.arow:last-child{border-bottom:none}
+.achips{display:flex;gap:8px;flex:1}
+.achip{background:#0d1117;border-radius:7px;padding:7px 12px}
+.achip-id{font-size:13px;font-weight:800;color:#e6edf3}
+.achip-ph{font-size:11px;font-weight:600;color:#e6edf3;font-family:monospace}
+.anum{font-size:11px;font-weight:800;color:#4b5563;min-width:20px;text-align:right}
+.aempty{padding:20px;text-align:center;color:#4b5563;font-size:13px}
+.footer{display:flex;justify-content:space-between;align-items:center;margin-top:14px}
+.tick{font-size:11px;color:#3fb950;font-family:monospace;opacity:0.7}
+.hint{font-size:10px;color:#252b35}
+@media(max-width:600px){.boxes{grid-template-columns:1fr 1fr}.bn{font-size:38px}}
+</style>
+</head>
+<body>
+<div class="db">
+  <div class="top-bar">
+    <div class="db-title">&#128274; Login pool manager</div>
+    <div id="pill" class="pill ${poolLocked ? 'pill-locked' : 'pill-live'}">
+      <div class="dot ${poolLocked ? 'dot-locked' : 'dot-live'}"></div>
+      <span id="pill-text">${poolLocked ? 'Locked' : 'Live'}</span>
+    </div>
+  </div>
+
+  <div class="boxes">
+    <div class="box ${poolLocked ? 'box-free locked-box' : 'box-free'}" id="free-box">
+      <div class="bl ${poolLocked ? 'c-locked' : 'c-free'}" id="free-label">${poolLocked ? '&#128274; Locked' : '&#10003; Free'}</div>
+      <div class="bn ${poolLocked ? 'c-locked' : 'c-free'}" id="num-free">${freeAccounts.length}</div>
+      <div class="bd ${poolLocked ? 'd-locked' : 'd-free'}" id="free-desc">${poolLocked ? poolLockedReason : 'Accounts ready'}</div>
+      <div id="unlock-block" style="display:${poolLocked ? 'block' : 'none'}">
+        <div class="unlock-t" id="unlock-countdown">--:--:--</div>
+        <div class="unlock-s">Unlocks at 18:00 (Zambia)</div>
+      </div>
+      <a href="/view/free" class="vbtn">View <span class="vcnt" id="cnt-free">${freeAccounts.length}</span></a>
+    </div>
+    <div class="box box-inuse">
+      <div class="bl c-inuse">&#9654; In use</div>
+      <div class="bn c-inuse" id="num-inuse">${inUseAccounts.length}</div>
+      <div class="bd d-inuse">Not yet logged out</div>
+      <a href="/view/inuse" class="vbtn">View <span class="vcnt" id="cnt-inuse">${inUseAccounts.length}</span></a>
+    </div>
+    <div class="box box-waiting">
+      <div class="bl c-waiting">&#9203; Waiting 24h</div>
+      <div class="bn c-waiting" id="num-waiting">${waitingAccounts.length}</div>
+      <div class="bd d-waiting">Full account</div>
+      <a href="/view/waiting" class="vbtn">View <span class="vcnt" id="cnt-waiting">${waitingAccounts.length}</span></a>
+    </div>
+    <div class="box box-bad">
+      <div class="bl c-bad">&#10060; Bad password</div>
+      <div class="bn c-bad" id="num-bad">${badPasswordAccounts.length}</div>
+      <div class="bd d-bad">Login failed</div>
+      <a href="/view/bad" class="vbtn">View <span class="vcnt" id="cnt-bad">${badPasswordAccounts.length}</span></a>
+    </div>
+  </div>
+
+  <div class="add-box">
+    <div class="add-title">&#43; Add account</div>
+    <div class="add-row">
+      <input class="add-input" id="inp-phone" placeholder="Phone number" type="text">
+      <input class="add-input" id="inp-pass" placeholder="Password" type="text">
+      <button class="add-btn" id="add-btn">Add</button>
+    </div>
+    <div class="msg" id="add-msg"></div>
+  </div>
+
+  <div class="alerts-area">
+    <div class="abtn-row">
+      <button class="abtn" id="view-btn">&#128065;&#65039; View IDs &amp; Numbers</button>
+      <button class="abtn-clear" id="clear-btn">&#128260; Deposit / Clear</button>
+    </div>
+    <div class="apanel" id="apanel">
+      <button class="ahide" id="hide-btn">&#128274; Hide IDs &amp; Numbers</button>
+      <div id="acontainer"><div class="aempty">No low balance accounts yet...</div></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="tick" id="tick">--:--:-- CAT</span>
+    <span class="hint">Live data &middot; Postgres &middot; Zambia Time</span>
+  </div>
+</div>
+
+<div id="note-printable" style="position:fixed;left:-9999px;top:0;width:400px;background:#fff;padding:32px 28px;font-family:sans-serif;">
+  <div id="note-title" style="font-size:16px;font-weight:900;color:#0f172a;margin-bottom:4px;"></div>
+  <div id="note-date" style="font-size:11px;color:#94a3b8;margin-bottom:20px;"></div>
+  <hr style="border:none;border-top:2px solid #e2e8f0;margin-bottom:16px;">
+  <div id="note-rows"></div>
+  <div style="margin-top:20px;font-size:10px;color:#cbd5e1;text-align:center;">Login Pool Server 2</div>
+</div>
+
+<style>
+.note-row{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#0f172a;}
+.note-row:last-child{border-bottom:none;}
+.note-num{font-size:11px;font-weight:700;color:#94a3b8;min-width:22px;text-align:right;}
+.note-id{font-weight:800;}
+.note-sep{color:#cbd5e1;}
+.note-phone{font-family:monospace;font-size:12px;color:#334155;}
+</style>
+
+<script>
+(function() {
+    // ── Clock ──────────────────────────────────────────────────────
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function zambiaTime() {
+        try {
+            return new Date().toLocaleTimeString('en-GB', { timeZone: 'Africa/Lusaka', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch(e) {
+            var d = new Date(Date.now() + 2 * 3600000);
+            return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+        }
     }
-}
+    setInterval(function() {
+        document.getElementById('tick').textContent = zambiaTime() + ' CAT';
+    }, 1000);
+    document.getElementById('tick').textContent = zambiaTime() + ' CAT';
 
-async function updateAccount(phone, fields) {
-    const map = { logoutTime: 'logout_time', logoutTimeStr: 'logout_time_str', lastHeartbeat: 'last_heartbeat', status: 'status', inUseSince: 'in_use_since', tabId: 'tab_id', freedAt: 'freed_at' };
-    const keys = Object.keys(fields);
-    const setClauses = keys.map((k, i) => `${map[k]} = $${i + 1}`).join(', ');
-    const values = [...keys.map(k => fields[k]), phone];
-    await pool.query(`UPDATE accounts SET ${setClauses} WHERE phone = $${values.length}`, values);
-}
+    // ── Stats polling ──────────────────────────────────────────────
+    function refreshStats() {
+        fetch('/stats').then(function(r) { return r.json(); }).then(function(d) {
+            document.getElementById('num-free').textContent = d.free;
+            document.getElementById('num-inuse').textContent = d.inUse;
+            document.getElementById('num-waiting').textContent = d.waiting;
+            document.getElementById('num-bad').textContent = d.badPassword;
+            document.getElementById('cnt-free').textContent = d.free;
+            document.getElementById('cnt-inuse').textContent = d.inUse;
+            document.getElementById('cnt-waiting').textContent = d.waiting;
+            document.getElementById('cnt-bad').textContent = d.badPassword;
+            var pill = document.getElementById('pill');
+            var pillText = document.getElementById('pill-text');
+            var freeBox = document.getElementById('free-box');
+            var freeLabel = document.getElementById('free-label');
+            var freeNum = document.getElementById('num-free');
+            var freeDesc = document.getElementById('free-desc');
+            var unlockBlock = document.getElementById('unlock-block');
+            if (d.locked) {
+                pill.className = 'pill pill-locked';
+                pill.querySelector('.dot').className = 'dot dot-locked';
+                pillText.textContent = 'Locked';
+                freeBox.className = 'box box-free locked-box';
+                freeLabel.className = 'bl c-locked';
+                freeLabel.innerHTML = '&#128274; Locked';
+                freeNum.className = 'bn c-locked';
+                freeDesc.className = 'bd d-locked';
+                freeDesc.textContent = d.reason;
+                unlockBlock.style.display = 'block';
+                // Unlock countdown
+                var now = new Date();
+                var h = now.getUTCHours() + 2; // Zambia UTC+2
+                if (h >= 24) h -= 24;
+                var unlockMs = new Date(Date.now() + ((18 - h) * 3600000) - (now.getUTCMinutes() * 60000) - (now.getUTCSeconds() * 1000));
+                if (unlockMs < Date.now()) unlockMs = new Date(unlockMs.getTime() + 86400000);
+                var diff = unlockMs - Date.now();
+                if (diff > 0) {
+                    var uh = Math.floor(diff / 3600000);
+                    var um = Math.floor((diff % 3600000) / 60000);
+                    var us = Math.floor((diff % 60000) / 1000);
+                    document.getElementById('unlock-countdown').textContent = uh + 'h ' + pad(um) + 'm ' + pad(us) + 's';
+                }
+            } else {
+                pill.className = 'pill pill-live';
+                pill.querySelector('.dot').className = 'dot dot-live';
+                pillText.textContent = 'Live';
+                freeBox.className = 'box box-free';
+                freeLabel.className = 'bl c-free';
+                freeLabel.innerHTML = '&#10003; Free';
+                freeNum.className = 'bn c-free';
+                freeDesc.className = 'bd d-free';
+                freeDesc.textContent = 'Accounts ready';
+                unlockBlock.style.display = 'none';
+            }
+        }).catch(function() {});
+    }
+    setInterval(refreshStats, 2000);
+    refreshStats();
 
-async function addAccount(phone, password) {
-    await pool.query(
-        `INSERT INTO accounts (phone, password, status) VALUES ($1, $2, 'FREE')`,
-        [phone, password]
-    );
-}
+    // ── Add Account ────────────────────────────────────────────────
+    function showMsg(text, ok) {
+        var el = document.getElementById('add-msg');
+        el.textContent = text;
+        el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+        el.style.display = 'block';
+        setTimeout(function() { el.style.display = 'none'; }, 3000);
+    }
+    document.getElementById('add-btn').addEventListener('click', function() {
+        var phone = document.getElementById('inp-phone').value.trim();
+        var password = document.getElementById('inp-pass').value.trim();
+        if (!phone || !password) { showMsg('Phone and password required', false); return; }
+        fetch('/add-account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: phone, password: password }) })
+        .then(function(r) { return r.json(); }).then(function(d) {
+            if (d.success) { showMsg('Account ' + phone + ' added!', true); document.getElementById('inp-phone').value = ''; document.getElementById('inp-pass').value = ''; refreshStats(); }
+            else { showMsg(d.error || 'Error', false); }
+        }).catch(function() { showMsg('Network error', false); });
+    });
 
-async function removeAccount(phone) {
-    await pool.query('DELETE FROM accounts WHERE phone = $1', [phone]);
-}
+    // ── Alerts Panel ───────────────────────────────────────────────
+    var BOX_SIZE = 30;
+    var panelOpen = false;
 
-async function resetAllAccounts() {
-    await pool.query(`UPDATE accounts SET status = 'FREE', logout_time = NULL, logout_time_str = NULL, last_heartbeat = NULL`);
-}
+    function parseId(tabId) {
+        var m = tabId.match(/ID:\\s*(\\S+)\\s*\\(([^)]+)\\)/);
+        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
+        m = tabId.match(/ID:\\s*(\\S+)\\s+(\\S+)/);
+        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
+        return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
+    }
 
-async function getBadPasswordAccounts() {
-    const { rows } = await pool.query('SELECT * FROM bad_password_accounts');
-    return rows.map(r => ({ phone: r.phone, password: r.password, reportedAt: r.reported_at, status: r.status }));
-}
+    function renderAlerts(data) {
+        var container = document.getElementById('acontainer');
+        var unique = []; var seen = {};
+        data.forEach(function(a) { if (!seen[a.tabId]) { seen[a.tabId] = true; unique.push(a); } });
+        if (unique.length === 0) { container.innerHTML = '<div class="aempty">No low balance accounts yet...</div>'; return; }
+        var boxes = [];
+        for (var i = 0; i < unique.length; i += BOX_SIZE) boxes.push(unique.slice(i, i + BOX_SIZE));
+        _boxes = boxes;
+        container.innerHTML = boxes.map(function(box, bi) {
+            var full = box.length >= BOX_SIZE;
+            var rowsHtml = box.map(function(a, ri) {
+                var p = parseId(a.tabId);
+                return '<div class="arow"><div class="achips"><div class="achip"><div class="achip-id">' + p.id + '</div></div>' +
+                    (p.phone ? '<div class="achip"><div class="achip-ph">' + p.phone + '</div></div>' : '') +
+                    '</div><div class="anum">' + (ri + 1) + '</div></div>';
+            }).join('');
+            var saveBtn = full ? '<div style="display:flex;gap:6px;padding:10px 12px;background:#0d1117;">' +
+                '<button onclick="saveBox(' + bi + ',\\'both\\')" style="flex:1;background:#10b981;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs &amp; Numbers</button>' +
+                '<button onclick="saveBox(' + bi + ',\\'id\\')" style="flex:1;background:#2563eb;color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128190; IDs Only</button>' +
+                '</div>' : '';
+            return '<div class="abox"><div class="abox-header"><div class="abox-title">&#9888;&#65039; BOX ' + (bi + 1) + '</div>' +
+                '<div class="abox-count' + (full ? ' full' : '') + '">' + box.length + ' / ' + BOX_SIZE + (full ? ' &bull; FULL' : '') + '</div></div>' +
+                '<div class="abox-body">' + rowsHtml + '</div>' + saveBtn + '</div>';
+        }).join('');
+    }
 
-async function addBadPasswordAccount(phone, password, reportedAt) {
-    await pool.query(
-        `INSERT INTO bad_password_accounts (phone, password, reported_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-        [phone, password, reportedAt]
-    );
-}
+    function pollAlerts() {
+        fetch('/alerts').then(function(r) { return r.json(); }).then(function(data) {
+            renderAlerts(data);
+        }).catch(function() {});
+        if (panelOpen) setTimeout(pollAlerts, 5000);
+    }
 
-async function removeBadPasswordAccount(phone) {
-    await pool.query('DELETE FROM bad_password_accounts WHERE phone = $1', [phone]);
-}
+    var _boxes = [];
+    function parseIdForPrint(tabId) {
+        var m = tabId.match(/ID:\\s*(\\S+)\\s*\\(([^)]+)\\)/);
+        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
+        m = tabId.match(/ID:\\s*(\\S+)\\s+(\\S+)/);
+        if (m) return { id: m[1], phone: m[2].replace(/^\\+260/, '') };
+        return { id: tabId.replace(/^ID:\\s*/, ''), phone: '' };
+    }
+    function saveBox(bi, mode) {
+        mode = mode || 'both';
+        try {
+            if (typeof html2canvas === 'undefined') {
+                alert('Save failed: image library did not load. Check your internet connection and reload the page.');
+                return;
+            }
+            var box = _boxes[bi];
+            if (!box) return;
+            var noteTitle = document.getElementById('note-title');
+            var noteDate = document.getElementById('note-date');
+            var noteRows = document.getElementById('note-rows');
+            var titleLabel = mode === 'id' ? 'IDs Only' : mode === 'phone' ? 'Numbers Only' : 'IDs & Numbers';
+            noteTitle.textContent = 'BOX ' + (bi + 1) + ' — ' + titleLabel + ' (' + box.length + '/30 FULL)';
+            noteDate.textContent = new Date().toLocaleString('en-GB');
+            noteRows.innerHTML = box.map(function(a, ri) {
+                var p = parseIdForPrint(a.tabId);
+                if (mode === 'id') {
+                    return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span></div>';
+                }
+                if (mode === 'phone') {
+                    return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-phone">' + p.phone + '</span></div>';
+                }
+                return '<div class="note-row"><span class="note-num">' + (ri+1) + '.</span><span class="note-id">' + p.id + '</span><span class="note-sep">|</span><span class="note-phone">' + p.phone + '</span></div>';
+            }).join('');
+            var el = document.getElementById('note-printable');
+            html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }).then(function(canvas) {
+                canvas.toBlob(function(blob) {
+                    if (!blob) { alert('Could not generate image blob.'); return; }
+                    var url = URL.createObjectURL(blob);
+                    var link = document.createElement('a');
+                    link.download = 'box-' + (bi+1) + '-' + mode + '.png';
+                    link.href = url;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+                }, 'image/png');
+            }).catch(function(err) {
+                alert('html2canvas failed: ' + err.message);
+            });
+        } catch (err) {
+            alert('Save failed: ' + (err && err.message ? err.message : err));
+        }
+    }
+    window.saveBox = saveBox;
 
-function getZambiaTime() {
-    const now = new Date();
-    const zambiaStr = now.toLocaleString('en-GB', { timeZone: TIMEZONE });
-    const [datePart, timePart] = zambiaStr.split(', ');
-    const [hours, minutes, seconds] = timePart.split(':').map(Number);
-    return { hour: hours, minute: minutes, second: seconds };
-}
+    document.getElementById('view-btn').addEventListener('click', function() {
+        document.getElementById('view-btn').style.display = 'none';
+        document.getElementById('apanel').style.display = 'block';
+        panelOpen = true;
+        pollAlerts();
+    });
 
-module.exports = {
-    pool,
-    initDB,
-    getAccounts,
-    getAccountByTabId,
-    claimFreeAccount,
-    reLoginForTab,
-    updateAccount,
-    addAccount,
-    removeAccount,
-    resetAllAccounts,
-    getBadPasswordAccounts,
-    addBadPasswordAccount,
-    removeBadPasswordAccount,
-    getZambiaTime,
-    TWENTY_FOUR_HOURS_MS,
-    FREE_ACCOUNT_LOCK_THRESHOLD,
-    LOCK_HOUR,
-    LOCK_MINUTE,
-    UNLOCK_HOUR,
-    UNLOCK_MINUTE,
-    REMOVE_PASSWORD,
-    HEARTBEAT_TIMEOUT_MS,
-    TIMEZONE,
-};
+    document.getElementById('hide-btn').addEventListener('click', function() {
+        document.getElementById('apanel').style.display = 'none';
+        document.getElementById('view-btn').style.display = 'flex';
+        panelOpen = false;
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', function() {
+        var pin = prompt('Enter PIN to clear alerts:');
+        if (!pin) return;
+        if (pin === '1234') {
+            fetch('/clear-alerts', { method: 'POST' }).then(function() {
+                renderAlerts([]);
+                alert('Alerts cleared!');
+            }).catch(function() { alert('Error'); });
+        } else { alert('Wrong PIN'); }
+    });
+})();
+</script>
+</body>
+</html>`);
+    } catch(e) { console.error('dashboard error:', e); res.status(500).send('Error: ' + e.message); }
+});
+
+initDB().then(async function() {
+    const { hour, minute } = getZambiaTime();
+    const accounts = await getAccounts();
+    const freeCount = accounts.filter(a => a.status === 'FREE').length;
+    const { shouldLock, isWorkingHours, isLowAccounts } = checkLockStatus(hour, minute, freeCount);
+    if (shouldLock) {
+        poolLocked = true;
+        poolLockedReason = isLowAccounts ? `Low accounts (${freeCount}). Locked until 18:00.` : 'Locked at 08:00. Unlocks at 18:00.';
+        console.log('Startup lock:', poolLockedReason);
+    }
+    app.listen(PORT, () => console.log('Pool Manager active on port ' + PORT + ' — Zambia Time (Africa/Lusaka)'));
+}).catch(function(err) {
+    console.error('Failed to initialize DB:', err);
+    process.exit(1);
+});
