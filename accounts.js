@@ -7,15 +7,10 @@ const pool = new Pool({
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const FREE_ACCOUNT_LOCK_THRESHOLD = 50;
-// Time lock: pool is always locked 08:00 -> 18:00 (Zambia), regardless of free count
 const LOCK_HOUR = 8;
 const LOCK_MINUTE = 0;
 const UNLOCK_HOUR = 18;
 const UNLOCK_MINUTE = 0;
-// Low-account lock: 18:00 -> 06:00 pool stays open no matter how low free count gets.
-// At 06:00, if free accounts <= threshold, lock early (until the 08:00 time lock takes over anyway).
-const LOW_ACCOUNT_LOCK_START_HOUR = 6;
-const LOW_ACCOUNT_LOCK_START_MINUTE = 0;
 const REMOVE_PASSWORD = '1234';
 const HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
 const TIMEZONE = 'Africa/Lusaka';
@@ -617,8 +612,6 @@ module.exports = {
     LOCK_MINUTE,
     UNLOCK_HOUR,
     UNLOCK_MINUTE,
-    LOW_ACCOUNT_LOCK_START_HOUR,
-    LOW_ACCOUNT_LOCK_START_MINUTE,
     REMOVE_PASSWORD,
     HEARTBEAT_TIMEOUT_MS,
     TIMEZONE,
