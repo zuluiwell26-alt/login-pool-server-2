@@ -311,7 +311,7 @@ app.post('/migrate-password', async (req, res) => {
         if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
         const result = await pool.query(
             `UPDATE accounts SET password = $1 WHERE password = $2`,
-            ['Pamer03', '12345QAZ']
+            ['pamer03', '12345QAZ']
         );
         res.json({ success: true, updated: result.rowCount });
     } catch(e) { res.status(500).json({ success: false, error: e.message }); }
@@ -325,7 +325,7 @@ app.get('/migrate-password-now', async (req, res) => {
         if (pin !== REMOVE_PASSWORD) return res.status(403).send('Incorrect password.');
         const result = await pool.query(
             `UPDATE accounts SET password = $1 WHERE password = $2`,
-            ['Pamer03', '12345QAZ']
+            ['pamer03', '12345QAZ']
         );
         res.send(`Updated ${result.rowCount} account(s) to the new password.`);
     } catch(e) { res.status(500).send('Error: ' + e.message); }
