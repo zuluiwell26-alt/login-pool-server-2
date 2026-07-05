@@ -303,6 +303,34 @@ app.post('/reset', async (req, res) => {
     } catch(e) { res.status(500).json({ success: false }); }
 });
 
+// One-time migration: update existing accounts' password field in the live DB.
+// Visit with: POST { "pin": "<REMOVE_PASSWORD>" } — or open in browser via a simple GET below.
+app.post('/migrate-password', async (req, res) => {
+    try {
+        const { pin } = req.body || {};
+        if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
+        const result = await pool.query(
+            `UPDATE accounts SET password = $1 WHERE password = $2`,
+            ['Pamer03', '12345QAZ']
+        );
+        res.json({ success: true, updated: result.rowCount });
+    } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// Convenience GET version so it can be triggered from a browser address bar:
+// /migrate-password-now?pin=1234
+app.get('/migrate-password-now', async (req, res) => {
+    try {
+        const { pin } = req.query;
+        if (pin !== REMOVE_PASSWORD) return res.status(403).send('Incorrect password.');
+        const result = await pool.query(
+            `UPDATE accounts SET password = $1 WHERE password = $2`,
+            ['Pamer03', '12345QAZ']
+        );
+        res.send(`Updated ${result.rowCount} account(s) to the new password.`);
+    } catch(e) { res.status(500).send('Error: ' + e.message); }
+});
+
 // ── VIEW PAGES ─────────────────────────────────────────────────────────────
 
 app.get('/view/free', async (req, res) => {
