@@ -58,14 +58,17 @@ setInterval(async () => {
     } catch(e) { console.error('auto-free error:', e); }
 }, 60 * 1000);
 
-// Heartbeat timeout
+// Heartbeat timeout — only applies once a real heartbeat has arrived
+// AFTER the account was claimed (acc.lastHeartbeat > acc.inUseSince).
+// This prevents accounts from being released mid-login, before the
+// script ever reaches Aviator and starts sending heartbeats.
 setInterval(async () => {
     try {
         const accounts = await getAccounts();
         const now = Date.now();
         for (const acc of accounts) {
-            if (acc.status === 'IN-USE' && !acc.logoutTime && acc.lastHeartbeat) {
-                if (now - acc.lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
+            if (acc.status === 'IN-USE' && !acc.logoutTime && acc.lastHeartbeat && acc.inUseSince) {
+                if (acc.lastHeartbeat > acc.inUseSince && now - acc.lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
                     const { hour, minute } = getZambiaTime();
                     await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: pad(hour) + ':' + pad(minute) + ' (tab closed)', inUseSince: null, tabId: null });
                 }
