@@ -12,21 +12,17 @@ const {
     getBadPasswordAccounts,
     addBadPasswordAccount,
     removeBadPasswordAccount,
-    getWithdrawPool,
-    removeWithdrawNumber,
-    pickWithdrawNumber,
-    requestAvailableNumber,
-    markWithdrawnIfPicked,
-    addAccountEverywhere,
-    recycleWithdrawnToAvailable,
-    finalizeStalePickedNumbers,
+    getZambiaTime,
     TWENTY_FOUR_HOURS_MS,
     FREE_ACCOUNT_LOCK_THRESHOLD,
-    LOW_ACCOUNT_LOCK_HOUR,
-    LOW_ACCOUNT_LOCK_MINUTE,
+    LOCK_HOUR,
+    LOCK_MINUTE,
+    UNLOCK_HOUR,
+    UNLOCK_MINUTE,
+    LOW_ACCOUNT_LOCK_START_HOUR,
+    LOW_ACCOUNT_LOCK_START_MINUTE,
     REMOVE_PASSWORD,
     HEARTBEAT_TIMEOUT_MS,
-    IN_USE_TIMEOUT_MS,
 } = require('./accounts');
 
 const app = express();
@@ -43,8 +39,6 @@ app.use((req, res, next) => {
 
 let poolLocked = false;
 let poolLockedReason = '';
-let withdrawLocked = false;
-let withdrawLockedReason = '';
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -59,85 +53,34 @@ setInterval(async () => {
     }
 }, 60 * 1000);
 
-const HEARTBEAT_SILENCE_TIMEOUT_MS = 3 * 60 * 60 * 1000; // 3 hours since LAST heartbeat → move to Waiting
-
-// Two timeout checks run together every 60 seconds:
-// 1. 5-hour in-use timeout — account has been IN-USE for 5h straight
-// 2. 10-hour heartbeat silence — no heartbeat received for 10h straight
-// Either condition moves the account to Waiting 24h.
-setInterval(async () => {
-    const accounts = await getAccounts();
-    const now = Date.now();
-    for (const acc of accounts) {
-        if (acc.status === 'IN-USE' && !acc.logoutTime) {
-            const { hour, minute } = getZambiaTime();
-            const timeStr = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-
-            // Check: 3-hour heartbeat silence timeout
-            // Only fires if at least one heartbeat was received AND
-            // the last heartbeat was more than 3 hours ago.
-            // If lastHeartbeat is null, the account never sent one — skip it.
-            if (acc.lastHeartbeat && acc.lastHeartbeat > acc.inUseSince && now - acc.lastHeartbeat > HEARTBEAT_SILENCE_TIMEOUT_MS) {
-                console.log(`Account ${acc.phone} last heartbeat was 3h+ ago. Moving to waiting.`);
-                await updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (3h no heartbeat)', inUseSince: null, tabId: null });
-                continue;
-            }
-        }
-    }
-}, 60 * 1000);
-
-// Two independent lock conditions — both can lock the pool:
-// 1. TIME LOCK: 18:00 to 07:30 — pool always locked during these hours
-// 2. LOW ACCOUNT LOCK: only from 16:00 onwards — if free < 50, lock
-//    Before 14:30, free account count doesn't matter.
-function getZambiaTime() {
-    const zambiaStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lusaka' });
-    const timePart = zambiaStr.split(', ')[1];
-    const [h, m] = timePart.split(':').map(Number);
-    return { hour: h, minute: m };
-}
-
+// Pool lock logic for THIS service:
+// 1. TIME LOCK: locked every day from LOCK_HOUR:LOCK_MINUTE (08:00) until
+//    UNLOCK_HOUR:UNLOCK_MINUTE (18:00) — the opposite schedule from the
+//    original login-pool-server, which locks overnight instead.
+// 2. LOW ACCOUNT LOCK: from LOW_ACCOUNT_LOCK_START_HOUR:MINUTE (06:00)
+//    onward, if free accounts are already at/under the threshold, lock
+//    early — no point waiting for 08:00 if the pool is already thin.
 setInterval(async () => {
     const { hour, minute } = getZambiaTime();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
 
-    // Time lock: 18:00 to 07:30
-    const isTimeLocked = hour >= 18 || hour < 7 || (hour === 7 && minute < 30);
+    const nowMinutes = hour * 60 + minute;
+    const lockStart = LOCK_HOUR * 60 + LOCK_MINUTE;     // 08:00
+    const lockEnd = UNLOCK_HOUR * 60 + UNLOCK_MINUTE;   // 18:00
+    const isTimeLocked = nowMinutes >= lockStart && nowMinutes < lockEnd;
 
-    // Low account lock: only from 16:00 onwards
-    const afterLowLockTime = hour > LOW_ACCOUNT_LOCK_HOUR || (hour === LOW_ACCOUNT_LOCK_HOUR && minute >= LOW_ACCOUNT_LOCK_MINUTE);
-    const isLowAccounts = afterLowLockTime && freeCount < FREE_ACCOUNT_LOCK_THRESHOLD;
+    const lowLockStart = LOW_ACCOUNT_LOCK_START_HOUR * 60 + LOW_ACCOUNT_LOCK_START_MINUTE; // 06:00
+    const afterLowLockTime = nowMinutes >= lowLockStart && nowMinutes < lockStart; // only the 06:00-08:00 window
+    const isLowAccounts = afterLowLockTime && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
 
     if (isTimeLocked || isLowAccounts) {
         if (!poolLocked) {
             poolLocked = true;
             poolLockedReason = isTimeLocked
-                ? 'Locked at 18:00. Unlocks at 07:30.'
-                : `Free accounts dropped to ${freeCount}. Locked from 16:00.`;
+                ? `Locked at ${pad(LOCK_HOUR)}:${pad(LOCK_MINUTE)}. Unlocks at ${pad(UNLOCK_HOUR)}:${pad(UNLOCK_MINUTE)}.`
+                : `Free accounts dropped to ${freeCount}. Locked early from ${pad(LOW_ACCOUNT_LOCK_START_HOUR)}:${pad(LOW_ACCOUNT_LOCK_START_MINUTE)}.`;
             console.log(poolLockedReason);
-
-            // 1 hour after lock time (19:00), move ALL IN USE accounts to Waiting 24h
-            // even if they never requested a new account
-            if (isTimeLocked) {
-                setTimeout(async () => {
-                    try {
-                        const latestAccounts = await getAccounts();
-                        const inUseAccounts = latestAccounts.filter(a => a.status === 'IN-USE' && !a.logoutTime);
-                        for (const acc of inUseAccounts) {
-                            const { hour: h, minute: m } = getZambiaTime();
-                            const timeStr = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
-                            await updateAccount(acc.phone, {
-                                logoutTime: Date.now(),
-                                logoutTimeStr: timeStr + ' (19:00 auto)',
-                                inUseSince: null,
-                                tabId: null
-                            });
-                            console.log(`[LOCK 19:00] Moved ${acc.phone} to Waiting.`);
-                        }
-                    } catch(e) { console.error('19:00 auto-move error:', e); }
-                }, 60 * 60 * 1000); // 1 hour after lock
-            }
         }
     } else {
         if (poolLocked) {
@@ -148,63 +91,16 @@ setInterval(async () => {
     }
 }, 10 * 1000);
 
-// Withdraw-pool auto-recycle: whenever Available hits 0 (and there's
-// something in Withdrawn to recycle), lock, then move every Withdrawn
-// number back to Available. Next tick will see Available > 0 again and
-// unlock automatically — a self-healing loop, not a permanent lock.
-setInterval(async () => {
-    try {
-        const withdrawPool = await getWithdrawPool();
-        const availableCount = withdrawPool.filter(w => w.status === 'AVAILABLE').length;
-        const withdrawnCount = withdrawPool.filter(w => w.status === 'WITHDRAWN').length;
-
-        if (availableCount === 0 && withdrawnCount > 0) {
-            withdrawLocked = true;
-            withdrawLockedReason = `Available reached 0 — recycling ${withdrawnCount} withdrawn number(s) back to Available.`;
-            console.log(withdrawLockedReason);
-            await recycleWithdrawnToAvailable();
-        } else {
-            if (withdrawLocked) {
-                withdrawLocked = false;
-                withdrawLockedReason = '';
-                console.log('Withdraw pool unlocked — numbers available again.');
-            }
-        }
-    } catch (e) {
-        console.error('withdraw-recycle error:', e);
-    }
-}, 30 * 1000);
-
-// Safety net: numbers stuck in 'PICKED' for 5+ minutes without a logout
-// get finalized to 'WITHDRAWN' automatically, so nothing sits invisibly
-// between Available and Withdrawn forever.
-setInterval(async () => {
-    try {
-        const result = await finalizeStalePickedNumbers();
-        if (result.finalized > 0) {
-            console.log(`[PICKED timeout] Finalized ${result.finalized} stale picked number(s) to Withdrawn.`);
-        }
-    } catch (e) {
-        console.error('finalize-stale-picked error:', e);
-    }
-}, 60 * 1000);
-
 app.get('/stats', async (req, res) => {
     const accounts = await getAccounts();
     const badPasswordAccounts = await getBadPasswordAccounts();
-    const withdrawPool = await getWithdrawPool();
     res.json({
         free: accounts.filter(a => a.status === 'FREE').length,
         inUse: accounts.filter(a => a.status === 'IN-USE' && !a.logoutTime).length,
         waiting: accounts.filter(a => a.status === 'IN-USE' && a.logoutTime).length,
         badPassword: badPasswordAccounts.length,
-        available: withdrawPool.filter(w => w.status === 'AVAILABLE').length,
-        picked: withdrawPool.filter(w => w.status === 'PICKED').length,
-        withdrawn: withdrawPool.filter(w => w.status === 'WITHDRAWN').length,
         locked: poolLocked,
         reason: poolLockedReason,
-        withdrawLocked: withdrawLocked,
-        withdrawLockedReason: withdrawLockedReason
     });
 });
 
@@ -317,7 +213,7 @@ function waitingPage(rows) {
 }
 
 function listPage(title, subtitle, rows, type) {
-    const showRemove = (type === 'free' || type === 'bad' || type === 'available' || type === 'withdrawn');
+    const showRemove = (type === 'free' || type === 'bad');
     const rowsHtml = rows.length
         ? rows.map((r, i) => `
             <div class="row" data-phone="${r.phone}">
@@ -327,7 +223,6 @@ function listPage(title, subtitle, rows, type) {
                     ${r.password ? `<div class="row-pass">${r.password}</div>` : ''}
                     ${r.reportedAt ? `<div class="row-time">&#9888; Reported at ${r.reportedAt}</div>` : ''}
                 </div>
-                ${type === 'available' ? `<button class="pick-btn" onclick="pickNumber('${r.phone}')">Pick</button>` : ''}
                 ${showRemove ? `<button class="rm-btn" onclick="removeAccount('${r.phone}')">Remove</button>` : ''}
             </div>`).join('')
         : `<div class="empty">No accounts</div>`;
@@ -355,7 +250,6 @@ function listPage(title, subtitle, rows, type) {
         .row-pass{font-size:11px;color:#4b5563;margin-top:2px}
         .row-time{font-size:11px;color:#f87171;margin-top:2px}
         .rm-btn{background:#2d0a0a;border:1px solid #7f1d1d;color:#f87171;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;flex-shrink:0}
-        .pick-btn{background:#0a1a2d;border:1px solid #1d4e7f;color:#71b4f8;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;flex-shrink:0;margin-right:6px}
         .empty{padding:40px;text-align:center;color:#4b5563;font-size:13px}
         .hidden{display:none}
         .pin-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
@@ -397,17 +291,10 @@ function listPage(title, subtitle, rows, type) {
     const listType='${type}';
     function removeAccount(phone){pendingPhone=phone;document.getElementById('pin-input').value='';document.getElementById('pin-err').style.display='none';document.getElementById('pin-modal').style.display='flex';setTimeout(()=>document.getElementById('pin-input').focus(),100);}
     function closePin(){pendingPhone=null;document.getElementById('pin-modal').style.display='none';}
-    function pickNumber(phone){
-        fetch('/pick-number',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})})
-        .then(r=>r.json()).then(d=>{
-            if(d.success){const row=document.querySelector('[data-phone="'+phone+'"]');if(row)row.remove();}
-            else{alert(d.error||'Could not pick number');}
-        });
-    }
     function confirmRemove(){
         const pin=document.getElementById('pin-input').value.trim();
         if(pin!=='1234'){document.getElementById('pin-err').style.display='block';document.getElementById('pin-input').value='';return;}
-        const endpoint=listType==='bad'?'/remove-bad-password':(listType==='available'||listType==='withdrawn')?'/remove-withdraw-number':'/remove-account';
+        const endpoint=listType==='bad'?'/remove-bad-password':'/remove-account';
         fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:pendingPhone,pin})})
         .then(r=>r.json()).then(d=>{
             if(d.success){closePin();const row=document.querySelector('[data-phone="'+pendingPhone+'"]');if(row)row.remove();}
@@ -427,13 +314,10 @@ app.get('/', async (req, res) => {
     const inUseAccounts = accounts.filter(a => a.status === 'IN-USE' && !a.logoutTime);
     const waitingAccounts = accounts.filter(a => a.status === 'IN-USE' && a.logoutTime);
     const badPasswordAccounts = await getBadPasswordAccounts();
-    const withdrawPool = await getWithdrawPool();
-    const availableAccounts = withdrawPool.filter(w => w.status === 'AVAILABLE');
-    const withdrawnAccounts = withdrawPool.filter(w => w.status === 'WITHDRAWN');
     res.send(`<!DOCTYPE html>
 <html>
 <head>
-    <title>Login Pool Manager</title>
+    <title>Login Pool Manager 2</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         *{box-sizing:border-box;margin:0;padding:0}
@@ -446,20 +330,18 @@ app.get('/', async (req, res) => {
         .live-dot{width:7px;height:7px;background:#3fb950;border-radius:50%;animation:blink 1.2s infinite}
         .lock-dot{width:7px;height:7px;background:#f87171;border-radius:50%;animation:blink 0.8s infinite}
         @keyframes blink{0%,100%{opacity:1}50%{opacity:0.15}}
-        .four-boxes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px}
+        .four-boxes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
         .box{border-radius:16px;padding:20px 16px 16px;display:flex;flex-direction:column;min-width:0}
         .box-free{background:#0a1a0f;border:1.5px solid #1a4a27}
         .box-inuse{background:#080f1f;border:1.5px solid #1a2f55}
         .box-waiting{background:#120c22;border:1.5px solid #2e1f55}
         .box-bad{background:#1a0f0a;border:1.5px solid #4a1f0a}
-        .box-available{background:#0a1a1a;border:1.5px solid #1a4a4a}
-        .box-withdrawn{background:#14141a;border:1.5px solid #35354a}
         .box-label{font-size:10px;font-weight:500;letter-spacing:1px;text-transform:uppercase;margin-bottom:14px}
-        .free-col{color:#3fb950}.inuse-col{color:#58a6ff}.waiting-col{color:#c4b5fd}.bad-col{color:#fb923c}.available-col{color:#2dd4bf}.withdrawn-col{color:#a5b4fc}
+        .free-col{color:#3fb950}.inuse-col{color:#58a6ff}.waiting-col{color:#c4b5fd}.bad-col{color:#fb923c}
         .box-num{font-size:56px;font-weight:500;line-height:1;letter-spacing:-3px;margin-bottom:8px}
-        .num-free{color:#3fb950}.num-inuse{color:#58a6ff}.num-waiting{color:#c4b5fd}.num-bad{color:#fb923c}.num-available{color:#2dd4bf}.num-withdrawn{color:#a5b4fc}
+        .num-free{color:#3fb950}.num-inuse{color:#58a6ff}.num-waiting{color:#c4b5fd}.num-bad{color:#fb923c}
         .box-desc{font-size:11px;margin-bottom:16px;flex:1;line-height:1.4}
-        .desc-free{color:#2a6e3a}.desc-inuse{color:#1e4a7a}.desc-waiting{color:#4a3080}.desc-bad{color:#7a3a10}.desc-available{color:#206e6e}.desc-withdrawn{color:#3a3a55}
+        .desc-free{color:#2a6e3a}.desc-inuse{color:#1e4a7a}.desc-waiting{color:#4a3080}.desc-bad{color:#7a3a10}
         .unlock-timer{font-size:15px;font-weight:500;color:#fff;margin-bottom:3px}
         .unlock-sub{font-size:10px;color:#4b1111;margin-bottom:12px}
         .view-btn{width:100%;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border:none;background:#92400e;color:#fed7aa;text-decoration:none}
@@ -471,19 +353,17 @@ app.get('/', async (req, res) => {
         .add-input{flex:1;min-width:120px;background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:10px 14px;border-radius:8px;font-size:13px;outline:none}
         .add-input::placeholder{color:#4b5563}
         .add-btn{background:#1a3a6e;border:none;color:#a8d0ff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
-        .reset-btn{width:100%;background:#130a0a;border:1.5px solid #3d1515;color:#f85149;padding:13px;border-radius:12px;font-size:13px;font-weight:500;cursor:pointer}
         .footer{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
         .tick{font-size:11px;color:#3fb950;font-family:monospace;opacity:0.7}
         .hint{font-size:10px;color:#252b35}
         .msg{font-size:12px;margin-top:10px;padding:8px 12px;border-radius:6px;display:none}
         .msg-ok{background:#0d4429;color:#3fb950}.msg-err{background:#4b1111;color:#f87171}
-        @media(max-width:600px){.four-boxes{grid-template-columns:1fr 1fr}.box-num{font-size:44px}}
     </style>
 </head>
 <body>
 <div class="db">
     <div class="top-bar">
-        <div class="db-title">&#128274; Login pool manager</div>
+        <div class="db-title">&#128274; Login pool manager 2</div>
         <div id="pill" class="${poolLocked?'locked-pill':'live-pill'}">
             <div class="${poolLocked?'lock-dot':'live-dot'}"></div>
             ${poolLocked?'Locked':'Live'}
@@ -496,7 +376,7 @@ app.get('/', async (req, res) => {
             <div class="box-desc desc-free" id="free-desc">Accounts ready</div>
             <div id="unlock-block" style="display:none;">
                 <div class="unlock-timer" id="unlock-countdown">--:--:--</div>
-                <div class="unlock-sub">Unlocks at 07:30</div>
+                <div class="unlock-sub">Unlocks at ${pad(UNLOCK_HOUR)}:${pad(UNLOCK_MINUTE)}</div>
             </div>
             <a href="/view/free" class="view-btn">View <span class="view-count" id="cnt-free">${freeAccounts.length}</span></a>
         </div>
@@ -518,21 +398,9 @@ app.get('/', async (req, res) => {
             <div class="box-desc desc-bad">Login failed</div>
             <a href="/view/bad" class="view-btn">View <span class="view-count" id="cnt-bad">${badPasswordAccounts.length}</span></a>
         </div>
-        <div class="box box-available">
-            <div class="box-label available-col">&#128230; Available</div>
-            <div class="box-num num-available" id="num-available">${availableAccounts.length}</div>
-            <div class="box-desc desc-available" id="available-desc">${withdrawLocked ? withdrawLockedReason : 'Ready to be withdrawn'}</div>
-            <a href="/view/available" class="view-btn">View <span class="view-count" id="cnt-available">${availableAccounts.length}</span></a>
-        </div>
-        <div class="box box-withdrawn">
-            <div class="box-label withdrawn-col">&#128229; Withdrawn</div>
-            <div class="box-num num-withdrawn" id="num-withdrawn">${withdrawnAccounts.length}</div>
-            <div class="box-desc desc-withdrawn">Already picked up</div>
-            <a href="/view/withdrawn" class="view-btn">View <span class="view-count" id="cnt-withdrawn">${withdrawnAccounts.length}</span></a>
-        </div>
     </div>
     <div class="add-box">
-        <div class="add-title">&#43; Add account (adds to both Free and Available)</div>
+        <div class="add-title">&#43; Add account</div>
         <div class="add-row">
             <input class="add-input" id="inp-phone" placeholder="Phone number" type="text">
             <input class="add-input" id="inp-pass" placeholder="Password" type="text">
@@ -552,7 +420,7 @@ app.get('/', async (req, res) => {
         document.getElementById('tick').textContent=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
         const cd=document.getElementById('unlock-countdown');
         if(cd&&document.getElementById('unlock-block').style.display!=='none'){
-            const unlock=new Date();unlock.setHours(7,30,0,0);
+            const unlock=new Date();unlock.setHours(${UNLOCK_HOUR},${UNLOCK_MINUTE},0,0);
             if(unlock<=now)unlock.setDate(unlock.getDate()+1);
             const diff=unlock-now;
             cd.textContent=Math.floor(diff/3600000)+'h '+pad(Math.floor((diff%3600000)/60000))+'m '+pad(Math.floor((diff%60000)/1000))+'s';
@@ -564,16 +432,10 @@ app.get('/', async (req, res) => {
             document.getElementById('num-inuse').textContent=d.inUse;
             document.getElementById('num-waiting').textContent=d.waiting;
             document.getElementById('num-bad').textContent=d.badPassword;
-            document.getElementById('num-available').textContent=d.available;
-            document.getElementById('num-withdrawn').textContent=d.withdrawn;
             document.getElementById('cnt-free').textContent=d.free;
             document.getElementById('cnt-inuse').textContent=d.inUse;
             document.getElementById('cnt-waiting').textContent=d.waiting;
             document.getElementById('cnt-bad').textContent=d.badPassword;
-            document.getElementById('cnt-available').textContent=d.available;
-            document.getElementById('cnt-withdrawn').textContent=d.withdrawn;
-            const availDesc=document.getElementById('available-desc');
-            if(availDesc){availDesc.textContent=d.withdrawLocked?d.withdrawLockedReason:'Ready to be withdrawn';}
             const pill=document.getElementById('pill');
             pill.className=d.locked?'locked-pill':'live-pill';
             pill.innerHTML=d.locked?'<div class="lock-dot"></div> Locked':'<div class="live-dot"></div> Live';
@@ -617,9 +479,6 @@ app.get('/view/free', async (req, res) => {
     const list = accounts
         .filter(a => a.status === 'FREE')
         .sort((a, b) => {
-            // Accounts with a logout_time were previously used — sort those
-            // by most recently freed first. Never-used accounts (no logout_time)
-            // go to the bottom.
             if (a.logoutTime && b.logoutTime) return b.logoutTime - a.logoutTime;
             if (a.logoutTime) return -1;
             if (b.logoutTime) return 1;
@@ -628,24 +487,11 @@ app.get('/view/free', async (req, res) => {
     res.send(listPage('Free Accounts', list.length + ' accounts ready', list, 'free'));
 });
 
-app.get('/view/available', async (req, res) => {
-    const withdrawPool = await getWithdrawPool();
-    const list = withdrawPool.filter(w => w.status === 'AVAILABLE').sort((a, b) => a.phone.localeCompare(b.phone));
-    res.send(listPage('Available Numbers', list.length + ' numbers ready to withdraw', list, 'available'));
-});
-
-app.get('/view/withdrawn', async (req, res) => {
-    const withdrawPool = await getWithdrawPool();
-    const list = withdrawPool.filter(w => w.status === 'WITHDRAWN').sort((a, b) => a.phone.localeCompare(b.phone));
-    res.send(listPage('Withdrawn Numbers', list.length + ' numbers already withdrawn', list, 'withdrawn'));
-});
-
 app.get('/view/inuse', async (req, res) => {
     const accounts = await getAccounts();
     const list = accounts
         .filter(a => a.status === 'IN-USE' && !a.logoutTime)
         .sort((a, b) => {
-            // Sort by tab ID number e.g. TAB-001 < TAB-002
             const aNum = a.tabId ? parseInt(a.tabId.replace('TAB-', '')) : 9999;
             const bNum = b.tabId ? parseInt(b.tabId.replace('TAB-', '')) : 9999;
             return aNum - bNum;
@@ -726,7 +572,7 @@ app.get('/view/waiting', async (req, res) => {
     const accounts = await getAccounts();
     const list = accounts.filter(a => a.status === 'IN-USE' && a.logoutTime)
         .map(a => ({ phone: a.phone, freeAt: a.logoutTime + TWENTY_FOUR_HOURS_MS, logoutTimeStr: a.logoutTimeStr }))
-        .sort((a, b) => a.freeAt - b.freeAt); // soonest free first
+        .sort((a, b) => a.freeAt - b.freeAt);
     res.send(waitingPage(list));
 });
 
@@ -752,41 +598,8 @@ app.post('/add-account', async (req, res) => {
     if (!phone || !password) return res.json({ success: false, error: 'Phone and password required.' });
     const accounts = await getAccounts();
     if (accounts.find(a => a.phone === phone)) return res.json({ success: false, error: 'Account already exists.' });
-    // Adds to both the login pool (Free) and the withdraw pool (Available)
-    // in one transaction — this is the only way accounts get added now.
-    await addAccountEverywhere(phone, password);
+    await addAccount(phone, password);
     res.json({ success: true });
-});
-
-app.post('/remove-withdraw-number', async (req, res) => {
-    const { phone, pin } = req.body;
-    if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
-    await removeWithdrawNumber(phone);
-    res.json({ success: true });
-});
-
-app.post('/pick-number', async (req, res) => {
-    const { phone } = req.body;
-    if (!phone) return res.json({ success: false, error: 'Phone required.' });
-    const picked = await pickWithdrawNumber(phone);
-    if (picked) return res.json({ success: true });
-    return res.json({ success: false, error: 'Number not available (already picked or withdrawn).' });
-});
-
-// Works like /request-login but for the withdraw pool: no phone needed,
-// just hands back the oldest AVAILABLE number and marks it PICKED.
-// Only touches withdraw_pool — Free/In-Use/Waiting are untouched.
-app.post('/request-available', async (req, res) => {
-    try {
-        const result = await requestAvailableNumber();
-        if (result) {
-            return res.json({ success: true, phone: result.phone, password: result.password });
-        }
-        return res.json({ success: false, error: 'No available numbers.' });
-    } catch (e) {
-        console.error('request-available error:', e);
-        return res.json({ success: false, error: 'Server error, please retry.' });
-    }
 });
 
 app.post('/remove-account', async (req, res) => {
@@ -805,7 +618,6 @@ app.post('/remove-bad-password', async (req, res) => {
 
 app.post('/request-login', async (req, res) => {
     if (poolLocked) {
-        // If this tab currently holds an account, move it to Waiting 24h
         const { tabId } = req.body;
         if (tabId) {
             try {
@@ -827,14 +639,10 @@ app.post('/request-login', async (req, res) => {
         return res.json({ success: false, error: `Pool locked. ${poolLockedReason}` });
     }
     const { tabId } = req.body;
-    // Reject any request that doesn't include a tab ID — every tab must
-    // identify itself so the server can track account ownership correctly.
     if (!tabId) return res.json({ success: false, error: 'Tab ID required. No account will be assigned without one.' });
     try {
         const { hour, minute } = getZambiaTime();
         const timeStr = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-        // Single transaction: moves old account to Waiting (if any) and
-        // claims a new one in one round-trip — no delay between steps.
         const claimed = await reLoginForTab(tabId, Date.now(), timeStr);
         if (claimed) {
             return res.json({ success: true, phone: claimed.phone, password: claimed.password });
@@ -863,11 +671,6 @@ app.post('/logout', async (req, res) => {
     const account = accounts.find(a => a.phone === phone);
     if (account) {
         await updateAccount(phone, { logoutTime: Date.now(), logoutTimeStr: logoutTime, lastHeartbeat: null, inUseSince: null, tabId: null });
-        // This is the ONLY place a logout can move a picked withdraw number
-        // to Withdrawn — a genuine, manual logout through this route.
-        // Automatic/system logouts (19:00 lock, idle timeout, re-login bump)
-        // never call this, by design.
-        await markWithdrawnIfPicked(phone);
         return res.json({ success: true, message: `Account ${phone} logged out. Will free after 24h.` });
     }
     return res.json({ success: false, error: 'Account not found.' });
@@ -892,21 +695,24 @@ app.post('/reset', async (req, res) => {
 
 // Start server after DB is ready
 initDB().then(async () => {
-    // Check lock state immediately on startup
     const { hour, minute } = getZambiaTime();
     const accounts = await getAccounts();
     const freeCount = accounts.filter(a => a.status === 'FREE').length;
-    const isTimeLocked = hour >= 18 || hour < 7 || (hour === 7 && minute < 30);
-    const afterLowLockTime = hour > LOW_ACCOUNT_LOCK_HOUR || (hour === LOW_ACCOUNT_LOCK_HOUR && minute >= LOW_ACCOUNT_LOCK_MINUTE);
-    const isLowAccounts = afterLowLockTime && freeCount < FREE_ACCOUNT_LOCK_THRESHOLD;
+    const nowMinutes = hour * 60 + minute;
+    const lockStart = LOCK_HOUR * 60 + LOCK_MINUTE;
+    const lockEnd = UNLOCK_HOUR * 60 + UNLOCK_MINUTE;
+    const isTimeLocked = nowMinutes >= lockStart && nowMinutes < lockEnd;
+    const lowLockStart = LOW_ACCOUNT_LOCK_START_HOUR * 60 + LOW_ACCOUNT_LOCK_START_MINUTE;
+    const afterLowLockTime = nowMinutes >= lowLockStart && nowMinutes < lockStart;
+    const isLowAccounts = afterLowLockTime && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
     if (isTimeLocked || isLowAccounts) {
         poolLocked = true;
         poolLockedReason = isTimeLocked
-            ? 'Locked at 18:00. Unlocks at 07:30.'
-            : `Free accounts dropped to ${freeCount}. Locked from 16:00.`;
+            ? `Locked at ${pad(LOCK_HOUR)}:${pad(LOCK_MINUTE)}. Unlocks at ${pad(UNLOCK_HOUR)}:${pad(UNLOCK_MINUTE)}.`
+            : `Free accounts dropped to ${freeCount}. Locked early from ${pad(LOW_ACCOUNT_LOCK_START_HOUR)}:${pad(LOW_ACCOUNT_LOCK_START_MINUTE)}.`;
         console.log('Startup lock:', poolLockedReason);
     }
-    app.listen(PORT, () => console.log(`Pool Manager active on port ${PORT} — connected to Postgres`));
+    app.listen(PORT, () => console.log(`Pool Manager 2 active on port ${PORT} — connected to Postgres`));
 }).catch(err => {
     console.error('Failed to initialize DB:', err);
     process.exit(1);
