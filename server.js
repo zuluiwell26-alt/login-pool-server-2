@@ -15,6 +15,7 @@ const {
     getWithdrawPool,
     removeWithdrawNumber,
     pickWithdrawNumber,
+    requestAvailableNumber,
     markWithdrawnIfPicked,
     addAccountEverywhere,
     recycleWithdrawnToAvailable,
@@ -770,6 +771,22 @@ app.post('/pick-number', async (req, res) => {
     const picked = await pickWithdrawNumber(phone);
     if (picked) return res.json({ success: true });
     return res.json({ success: false, error: 'Number not available (already picked or withdrawn).' });
+});
+
+// Works like /request-login but for the withdraw pool: no phone needed,
+// just hands back the oldest AVAILABLE number and marks it PICKED.
+// Only touches withdraw_pool — Free/In-Use/Waiting are untouched.
+app.post('/request-available', async (req, res) => {
+    try {
+        const result = await requestAvailableNumber();
+        if (result) {
+            return res.json({ success: true, phone: result.phone, password: result.password });
+        }
+        return res.json({ success: false, error: 'No available numbers.' });
+    } catch (e) {
+        console.error('request-available error:', e);
+        return res.json({ success: false, error: 'Server error, please retry.' });
+    }
 });
 
 app.post('/remove-account', async (req, res) => {
