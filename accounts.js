@@ -430,6 +430,9 @@ async function initDB() {
             ["969781048","pamer03"],
             ["969950228","pamer03"],
         ];
+        // Batched single INSERT instead of 371 separate queries — this is
+        // dramatically faster and avoids Railway's health check timing out
+        // while initDB() is still running on startup.
         const values = [];
         const placeholders = [];
         phoneList.forEach(([phone, password], i) => {
@@ -459,6 +462,7 @@ async function getAccounts() {
     }));
 }
 
+// Find an IN-USE account currently held by a specific tab ID
 async function getAccountByTabId(tabId) {
     const { rows } = await pool.query(
         `SELECT * FROM accounts WHERE tab_id = $1 AND status = 'IN-USE' AND logout_time IS NULL LIMIT 1`,
@@ -477,6 +481,7 @@ async function getAccountByTabId(tabId) {
     };
 }
 
+// Single-transaction: move old account to Waiting and claim a new one atomically
 async function reLoginForTab(tabId, heartbeatNow, logoutTimeStr) {
     const client = await pool.connect();
     try {
@@ -512,6 +517,8 @@ async function reLoginForTab(tabId, heartbeatNow, logoutTimeStr) {
     }
 }
 
+// ATOMIC CLAIM: picks ONE free account and marks it IN-USE in a single SQL
+// statement. Orders by freed_at ASC NULLS LAST — accounts free longest go first.
 async function claimFreeAccount(heartbeatNow, tabId) {
     const client = await pool.connect();
     try {
