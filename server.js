@@ -2,7 +2,7 @@ const express = require('express');
 const {
     pool, initDB, getAccounts, getAccountByTabId,
     claimFreeAccount, reLoginForTab, updateAccount,
-    addAccount, removeAccount, resetAllAccounts,
+    addAccount, removeAccount, resetAllAccounts, deleteAllAccounts,
     getBadPasswordAccounts, addBadPasswordAccount, removeBadPasswordAccount,
     getZambiaTime, TWENTY_FOUR_HOURS_MS, FREE_ACCOUNT_LOCK_THRESHOLD,
     LOCK_HOUR, LOCK_MINUTE, UNLOCK_HOUR, UNLOCK_MINUTE,
@@ -302,6 +302,18 @@ app.post('/reset', async (req, res) => {
     try {
         await resetAllAccounts();
         poolLocked = false; poolLockedReason = '';
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+// Actually DELETES every account row - not the same as /reset, which only
+// marks existing accounts back to FREE. PIN-protected like the other
+// destructive endpoints (remove-account, remove-bad-password).
+app.post('/wipe-all-accounts', async (req, res) => {
+    try {
+        const { pin } = req.body || {};
+        if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
+        await deleteAllAccounts();
         res.json({ success: true });
     } catch(e) { res.status(500).json({ success: false }); }
 });
