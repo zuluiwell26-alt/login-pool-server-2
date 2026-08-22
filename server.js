@@ -315,7 +315,10 @@ app.post('/wipe-all-accounts', async (req, res) => {
         if (pin !== REMOVE_PASSWORD) return res.json({ success: false, error: 'Incorrect password.' });
         await deleteAllAccounts();
         res.json({ success: true });
-    } catch(e) { res.status(500).json({ success: false }); }
+    } catch(e) {
+        console.error('wipe-all-accounts error:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // One-time migration: update existing accounts' password field in the live DB.
@@ -343,6 +346,16 @@ app.get('/migrate-password-now', async (req, res) => {
             ['pamer03', '12345QAZ']
         );
         res.send(`Updated ${result.rowCount} account(s) to the new password.`);
+    } catch(e) { res.status(500).send('Error: ' + e.message); }
+});
+
+// Open directly in a browser: /wipe-all-accounts-now?pin=1234
+app.get('/wipe-all-accounts-now', async (req, res) => {
+    try {
+        const { pin } = req.query;
+        if (pin !== REMOVE_PASSWORD) return res.status(403).send('Incorrect password.');
+        await deleteAllAccounts();
+        res.send('All accounts deleted.');
     } catch(e) { res.status(500).send('Error: ' + e.message); }
 });
 
