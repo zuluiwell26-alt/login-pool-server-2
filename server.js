@@ -28,15 +28,18 @@ function pad(n) { return String(n).padStart(2, '0'); }
 function checkLockStatus(hour, minute, freeCount) {
     const t = hour * 60 + minute;
 
-    // Mandatory time lock: 08:00 -> 18:00
+    // A window [start, end) in minutes; if start > end it crosses midnight.
+    const inWindow = (start, end) => start <= end ? (t >= start && t < end) : (t >= start || t < end);
+
+    // Mandatory time lock: 20:00 -> 04:00 (crosses midnight)
     const lockStart = LOCK_HOUR * 60 + LOCK_MINUTE;
     const lockEnd = UNLOCK_HOUR * 60 + UNLOCK_MINUTE;
-    const isTimeLocked = t >= lockStart && t < lockEnd;
+    const isTimeLocked = inWindow(lockStart, lockEnd);
 
-    // Low-account lock: 06:00 -> 08:00 only, and only if free count is at/below threshold
+    // Low-account lock: 18:00 -> 20:00 only, and only if free count is at/below threshold
     const lowAccountStart = LOW_ACCOUNT_LOCK_START_HOUR * 60 + LOW_ACCOUNT_LOCK_START_MINUTE;
-    const lowAccountEnd = lockStart; // feeds straight into the time lock at 08:00
-    const isLowAccountWindow = t >= lowAccountStart && t < lowAccountEnd;
+    const lowAccountEnd = lockStart; // feeds straight into the time lock at 20:00
+    const isLowAccountWindow = inWindow(lowAccountStart, lowAccountEnd);
     const isLowAccounts = isLowAccountWindow && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
 
     return { shouldLock: isTimeLocked || isLowAccounts, isWorkingHours: !isTimeLocked, isLowAccounts };
@@ -157,7 +160,7 @@ async function setupPool(name, base, store, alertsTable) {
             if (shouldLock) {
                 if (!poolLocked) {
                     poolLocked = true;
-                    poolLockedReason = isLowAccounts ? `Low accounts (${freeCount}). Locked until 20:00.` : 'Locked at 08:00. Unlocks at 20:00.';
+                    poolLockedReason = isLowAccounts ? `Low accounts (${freeCount}). Locked until 04:00.` : 'Locked at 20:00. Unlocks at 04:00.';
                     console.log('Pool locked:', poolLockedReason);
                 }
             } else {
@@ -166,28 +169,28 @@ async function setupPool(name, base, store, alertsTable) {
         } catch(e) { console.error('lock-check error:', e); }
     }, 10 * 1000);
 
-    // 09:00 sweep - 1h after the 08:00 lock, move any leftover IN-USE accounts to Waiting.
+    // 21:00 sweep - 1h after the 20:00 lock, move any leftover IN-USE accounts to Waiting.
     // Runs at most once per Zambia calendar day, safe against server restarts within the hour.
-    let lastNineAmSweepDate = null;
+    let lastSweepDate = null;
     setInterval(async () => {
         try {
             const { hour } = getZambiaTime();
-            if (hour !== 9) return;
+            if (hour !== 21) return;
             const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
-            if (lastNineAmSweepDate === todayStr) return;
+            if (lastSweepDate === todayStr) return;
             const accounts = await store.getAccounts();
             const { hour: h2, minute: m2 } = getZambiaTime();
             const timeStr = pad(h2) + ':' + pad(m2);
             let moved = 0;
             for (const acc of accounts) {
                 if (acc.status === 'IN-USE' && !acc.logoutTime) {
-                    await store.updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (09:00 sweep)', lastHeartbeat: null, inUseSince: null, tabId: null });
+                    await store.updateAccount(acc.phone, { logoutTime: Date.now(), logoutTimeStr: timeStr + ' (21:00 sweep)', lastHeartbeat: null, inUseSince: null, tabId: null });
                     moved++;
                 }
             }
-            lastNineAmSweepDate = todayStr;
-            console.log('09:00 sweep: moved ' + moved + ' account(s) to Waiting.');
-        } catch(e) { console.error('nine-am-sweep error:', e); }
+            lastSweepDate = todayStr;
+            console.log('21:00 sweep: moved ' + moved + ' account(s) to Waiting.');
+        } catch(e) { console.error('sweep error:', e); }
     }, 30 * 1000);
 
     // -- API ENDPOINTS ----------------------------------------------------------
@@ -524,7 +527,7 @@ async function setupPool(name, base, store, alertsTable) {
           <div class="bd ${poolLocked ? 'd-locked' : 'd-free'}" id="free-desc">${poolLocked ? poolLockedReason : 'Accounts ready'}</div>
           <div id="unlock-block" style="display:${poolLocked ? 'block' : 'none'}">
             <div class="unlock-t" id="unlock-countdown">--:--:--</div>
-            <div class="unlock-s">Unlocks at 20:00 (Zambia)</div>
+            <div class="unlock-s">Unlocks at 04:00 (Zambia)</div>
           </div>
           <a href="${base}/view/free" class="vbtn">View <span class="vcnt" id="cnt-free">${freeAccounts.length}</span></a>
         </div>
@@ -634,7 +637,7 @@ async function setupPool(name, base, store, alertsTable) {
                     var now = new Date();
                     var h = now.getUTCHours() + 2; // Zambia UTC+2
                     if (h >= 24) h -= 24;
-                    var unlockMs = new Date(Date.now() + ((20 - h) * 3600000) - (now.getUTCMinutes() * 60000) - (now.getUTCSeconds() * 1000));
+                    var unlockMs = new Date(Date.now() + ((4 - h) * 3600000) - (now.getUTCMinutes() * 60000) - (now.getUTCSeconds() * 1000));
                     if (unlockMs < Date.now()) unlockMs = new Date(unlockMs.getTime() + 86400000);
                     var diff = unlockMs - Date.now();
                     if (diff > 0) {
@@ -817,7 +820,7 @@ async function setupPool(name, base, store, alertsTable) {
     const startLock = checkLockStatus(hour, minute, startFree);
     if (startLock.shouldLock) {
         poolLocked = true;
-        poolLockedReason = startLock.isLowAccounts ? `Low accounts (${startFree}). Locked until 20:00.` : 'Locked at 08:00. Unlocks at 20:00.';
+        poolLockedReason = startLock.isLowAccounts ? `Low accounts (${startFree}). Locked until 04:00.` : 'Locked at 20:00. Unlocks at 04:00.';
         console.log('[' + name + '] Startup lock:', poolLockedReason);
     }
 }
