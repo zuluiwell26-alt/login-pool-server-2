@@ -7,14 +7,15 @@ const pool = new Pool({
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const FREE_ACCOUNT_LOCK_THRESHOLD = 50;
-// Time lock: both pools are always locked 08:00 -> 20:00 (Zambia), regardless of free count
-const LOCK_HOUR = 8;
+// Time lock: both pools are always locked 20:00 -> 04:00 (Zambia), regardless of free count.
+// The window crosses midnight; checkLockStatus in server.js handles the wrap.
+const LOCK_HOUR = 20;
 const LOCK_MINUTE = 0;
-const UNLOCK_HOUR = 20;
+const UNLOCK_HOUR = 4;
 const UNLOCK_MINUTE = 0;
-// Low-account lock: 20:00 -> 06:00 pool stays open no matter how low free count gets.
-// At 06:00, if free accounts <= threshold, lock early (until the 08:00 time lock takes over anyway).
-const LOW_ACCOUNT_LOCK_START_HOUR = 6;
+// Low-account lock: 04:00 -> 18:00 pool stays open no matter how low free count gets.
+// At 18:00, if free accounts <= threshold, lock early (until the 20:00 time lock takes over anyway).
+const LOW_ACCOUNT_LOCK_START_HOUR = 18;
 const LOW_ACCOUNT_LOCK_START_MINUTE = 0;
 const REMOVE_PASSWORD = '1234';
 const HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
