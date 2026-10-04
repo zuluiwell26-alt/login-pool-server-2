@@ -6,7 +6,6 @@ const {
     getBadPasswordAccounts, addBadPasswordAccount, removeBadPasswordAccount,
     getZambiaTime, TWENTY_FOUR_HOURS_MS, FREE_ACCOUNT_LOCK_THRESHOLD,
     LOCK_HOUR, LOCK_MINUTE, UNLOCK_HOUR, UNLOCK_MINUTE,
-    LOW_ACCOUNT_LOCK_START_HOUR, LOW_ACCOUNT_LOCK_START_MINUTE,
     REMOVE_PASSWORD, HEARTBEAT_TIMEOUT_MS, TIMEZONE,
 } = require('./accounts');
 
@@ -36,13 +35,8 @@ function checkLockStatus(hour, minute, freeCount) {
     const lockEnd = UNLOCK_HOUR * 60 + UNLOCK_MINUTE;
     const isTimeLocked = inWindow(lockStart, lockEnd);
 
-    // Low-account lock: 18:00 -> 20:00 only, and only if free count is at/below threshold
-    const lowAccountStart = LOW_ACCOUNT_LOCK_START_HOUR * 60 + LOW_ACCOUNT_LOCK_START_MINUTE;
-    const lowAccountEnd = lockStart; // feeds straight into the time lock at 20:00
-    const isLowAccountWindow = inWindow(lowAccountStart, lowAccountEnd);
-    const isLowAccounts = isLowAccountWindow && freeCount <= FREE_ACCOUNT_LOCK_THRESHOLD;
-
-    return { shouldLock: isTimeLocked || isLowAccounts, isWorkingHours: !isTimeLocked, isLowAccounts };
+    // Time only - free count never locks early, so Mwos and GSB always lock and unlock together.
+    return { shouldLock: isTimeLocked, isWorkingHours: !isTimeLocked, isLowAccounts: false };
 }
 
 const HEARTBEAT_SILENCE_TIMEOUT_MS = 3 * 60 * 60 * 1000; // 3h with no real heartbeat -> Waiting
