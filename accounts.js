@@ -13,10 +13,6 @@ const LOCK_HOUR = 20;
 const LOCK_MINUTE = 0;
 const UNLOCK_HOUR = 4;
 const UNLOCK_MINUTE = 0;
-// Low-account lock: 04:00 -> 18:00 pool stays open no matter how low free count gets.
-// At 18:00, if free accounts <= threshold, lock early (until the 20:00 time lock takes over anyway).
-const LOW_ACCOUNT_LOCK_START_HOUR = 18;
-const LOW_ACCOUNT_LOCK_START_MINUTE = 0;
 const REMOVE_PASSWORD = '1234';
 const HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
 const TIMEZONE = 'Africa/Lusaka';
@@ -295,8 +291,6 @@ module.exports = {
     LOCK_MINUTE,
     UNLOCK_HOUR,
     UNLOCK_MINUTE,
-    LOW_ACCOUNT_LOCK_START_HOUR,
-    LOW_ACCOUNT_LOCK_START_MINUTE,
     REMOVE_PASSWORD,
     HEARTBEAT_TIMEOUT_MS,
     TIMEZONE,
